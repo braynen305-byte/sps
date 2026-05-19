@@ -15,7 +15,7 @@ html, body {
 }
 
 .container {
-    width: 400px;
+    width: 90%;
     height: auto;
     border: 1px solid #ccc;
     border-radius: 20px 20px 20px 20px;
@@ -25,10 +25,12 @@ html, body {
 }
 .container h1 {
     margin: 0;
+    width: 100%;
    display: flex;
     justify-content: center;
     align-items: center;
-    height: 45px;
+    height: auto;
+    padding: 10px;
     color: #ffffff;
     font-size: 20px;
     background-color: #007BFF;
@@ -69,8 +71,13 @@ button {
     margin: 0px 0px 10px 0px;
 }
 
-#options p {
-    text-align: left;
-    margin-top: 5px;
-    margin-bottom: 20px;
+@media (max-width: 600px) {
+    .container {
+        width: 60%;
+    }
+
+    .container h1 {
+        text-align: center;
+    }
 }
+
