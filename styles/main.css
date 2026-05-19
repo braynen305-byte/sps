@@ -69,8 +69,28 @@ button {
     margin: 0px 0px 10px 0px;
 }
 
-#options p {
-    text-align: left;
-    margin-top: 5px;
-    margin-bottom: 20px;
+@media (max-width: 400px) {
+    .container {
+        width: 80%;
+        border-radius: 10px;
+    }
+
+    form {
+        width: 90%;
+        margin: 10px auto;
+    }
+
+    h1 {
+        height: 40px;
+        font-size: 18px;
+    }
+
+    label, #username, #password, button {
+        width: 100%;
+    }
+
+    button {
+        padding: 8px;
+    }
 }
+
