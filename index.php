@@ -15,7 +15,7 @@
         
     <h1>SERVICE PORTAL LOGIN</h1>
 
-        <form action="login.php" method="post">
+        <form action="/includes/login.php" method="post">
             <label for="username">Username</label>
             <input type="text" name="username" id="username" placeholder="Username">
             <label for="password">Password</label>
