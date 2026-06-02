@@ -15,16 +15,24 @@
         
     <h1>SERVICE PORTAL LOGIN</h1>
 
-        <form action="/includes/login.php" method="post">
+        <form action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" method="post">
+
+
             <label for="username">Username</label>
             <input type="text" name="username" id="username" placeholder="Username">
+
             <label for="password">Password</label>
             <input type="password" name="password" id="password" placeholder="Password">
+
             <button type="submit">Login</button>
-            <button type="submit">Create Account</button>
+
+            <button type="button" onclick="window.location.href='../pages/register.php'">Create Account</button>
+
             <div id="options">  
-        <p id="forgtPasswordBttn"><a href="forgot_password.php">Forgot Password</a></p>
-        </div>
+                    <p id="forgtPasswordBttn"><a href="/pages/forgotpass.php">Forgot Password</a></p>
+            </div>
+
+
         </form>
             
     </div>
