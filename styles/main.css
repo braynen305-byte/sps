@@ -7,15 +7,91 @@
 
 html, body {
     height: 100%;
+    margin: 0;
+    padding: 0;
     font-family: Arial, sans-serif;
     background-color: #f4f4f4;
+   
+}
+
+
+
+nav {
+    background-color: #0056b3;
+    width: 100%;
+    height: 45px;
+    color: white;
+    position: fixed;
+    top: 0;
+    left: 0;
+
+}
+
+nav ul {
+    list-style-type: none;
     display: flex;
     justify-content: center;
     align-items: center;
+    height: 100%;
+
+}
+nav ul a {
+    color: white;
+    text-decoration: none;
+    font-size: 18px;
+    font-weight: bold;
+    font-family: Arial, sans-serif;
+    padding: 10px 15px;
+    height: 100%;
+    justify-content: center;
+    align-items: center;
+    display: flex;  
 }
 
+
+nav ul li {
+    margin: 0 15px;
+    height: 100%;
+    
+}
+
+
+.hero-image {
+
+    width: 100%;
+    height: 220px;
+    object-position: center 75%;
+    object-fit: cover;
+    background-color: #000000;
+    margin-top: 45px; /* Adjust for fixed nav */
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .container {
-    width: 400px;
+    width: 350px;
+    height: auto;
+    border: 1px solid #ccc;
+    border-radius: 20px 20px 20px 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    background-color: rgb(234, 234, 234);
+    margin: 5% auto 0% auto;
+    
+}
+
+.forgotcontainer {
+    width: 500px;
     height: auto;
     border: 1px solid #ccc;
     border-radius: 20px 20px 20px 20px;
@@ -23,6 +99,8 @@ html, body {
     background-color: rgb(234, 234, 234);
     
 }
+
+
 .container h1 {
     margin: 0;
    display: flex;
@@ -38,7 +116,7 @@ html, body {
 form{
     font-size: 15px;
     font-weight: bold;
-    width: 80%;
+    width: 90%;
     margin: 15px auto;
    
 }
@@ -47,7 +125,30 @@ label {
    margin-bottom: 0px;
    padding: 5px;
    display: block;
+   
   
+}
+
+
+#forgotpass-email {
+    width: 95%;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}  
+
+#forgotpass-form {
+    
+    margin-top: 10px;
+}
+
+.forgotcontainer  p {
+    margin-top: 20px;
+    font-size: 14px;
+    margin-left: 28px;
+
+    padding-left: 0px 0px;
 }
 
 #username, #password {
@@ -68,6 +169,24 @@ button {
     cursor: pointer;
     margin: 0px 0px 10px 0px;
 }
+
+
+footer {
+    
+    text-align: center;
+    padding: 20px;
+    background-color: #333;
+    color: white;
+    width: 100%;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    
+   
+
+}
+
+
 
 @media (max-width: 400px) {
     .container {

@@ -11,6 +11,26 @@
 
 
 <body>
+
+<nav>
+        <ul>
+            <li><a href=" ">Home</a></li>
+            <li><a href="../index.php">Login</a></li> 
+            <li><a href=" ">Support</a></li>
+
+        </ul>
+    </nav>
+    <img src="../images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
+    <section class="hero">
+        <div class="hero-content">  
+            
+        </div>
+    </section>
+
+
+
+
+
     <div class="container">
         
     <h1>SERVICE PORTAL LOGIN</h1>
@@ -34,9 +54,10 @@
 
 
         </form>
-            
+         
     </div>
-</body>
-</html> 
+<footer>
+    <p>&copy; 2024 Service Portal. All rights reserved.</p> 
+</footer>
 </body>
 </html>
