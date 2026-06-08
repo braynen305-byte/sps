@@ -68,17 +68,6 @@ nav ul li {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 .container {
     width: 350px;
     height: auto;
@@ -124,7 +113,7 @@ form{
 label {
    margin-bottom: 0px;
    padding: 5px;
-   display: block;
+   
    
   
 }

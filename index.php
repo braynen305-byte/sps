@@ -20,7 +20,7 @@
 
         </ul>
     </nav>
-    <img src="../images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
+    <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
     <section class="hero">
         <div class="hero-content">  
             
@@ -46,10 +46,10 @@
 
             <button type="submit">Login</button>
 
-            <button type="button" onclick="window.location.href='../pages/register.php'">Create Account</button>
+            <button type="button" onclick="window.location.href='/sps/pages/register.php'">Create Account</button>
 
             <div id="options">  
-                    <p id="forgtPasswordBttn"><a href="/pages/forgotpass.php">Forgot Password</a></p>
+                    <p id="forgtPasswordBttn"><a href="/sps/pages/forgotpass.php">Forgot Password</a></p>
             </div>
 
 

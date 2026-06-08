@@ -1,17 +1,14 @@
 
-
-
-
 .regcontainer {
-    width: 600px;
+    width: 80%;
     height: auto;
     margin: 0px auto;
     border: 1px solid #ccc;
     border-radius: 20px 20px 20px 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     background-color: rgb(234, 234, 234);
-    margin-top: 90px;
-    margin-bottom: 100px;
+    
+    margin-bottom: 10px;
     
 }
 .regcontainer h1 {
@@ -27,7 +24,7 @@
     font-family: Arial, sans-serif;
 }
 
-.regform{
+form{
     font-size: 15px;
     font-weight: bold;
     width: 80%;
@@ -39,30 +36,69 @@
 label {
    margin-bottom: 0px;
    padding: 5px;
-   display: block;
+   
+   
   
 }
 
 
 #gender {
-    width: 95%;
+    width: 85%;
     padding: 10px;
     margin-bottom: 10px;
     border: 1px solid #ccc;
     border-radius: 5px;
+
+}
+
+.form-row{
+    display: flex;
+    flex-direction:row;
+    gap: 5px;
+    margin: 5px;
+   
+
+}
+
+.form-group{
+    flex: 1;
+
 }
 
 
-#firstname, #password, #lastname,#middlename, #email, #confirm_password, #dob {
-    width: 95%;
+
+
+#firstname, #lastname,#middlename {
+    width: 90%;
     padding: 10px;
     margin-bottom: 10px;
+    margin-top: 5px;;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    
+}
+
+#dob, #gender, #email{
+    width: 90%;
+    padding: 10px;
+    margin-bottom: 10px;
+    margin-top: 5px;;
     border: 1px solid #ccc;
     border-radius: 5px;
 }
 
-.regbutton {
-    width: 95%;
+#password, #confirm_password {
+    width: 90%;
+    padding: 10px;
+    margin-bottom: 10px;
+    margin-top: 5px;;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+#formbutton {
+    
+    width: 15%;
     height: 40px;
     padding: 0px;
     background-color: #007BFF;
@@ -70,7 +106,7 @@ label {
     border: none;
     border-radius: 5px;
     cursor: pointer;
-    margin: 10px 0px 20px 0px;
+    margin: 10px auto 20px auto;
     font-size: 18px;
     font-weight: bold;
     font-family: Arial, sans-serif;
@@ -84,7 +120,7 @@ label {
         border-radius: 10px;
     }
 
-    .regform {
+    form {
         width: 90%;
         margin: 10px auto;
     }
