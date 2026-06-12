@@ -1,6 +1,12 @@
 
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
 .regcontainer {
-    width: 80%;
+    width: 70%;
     height: auto;
     margin: 0px auto;
     border: 1px solid #ccc;
@@ -50,6 +56,25 @@ label {
     border-radius: 5px;
 
 }
+.hero{
+    display: flex;
+    flex-direction: column;
+    align-items: left;
+    margin-top: 20px;
+    margin-bottom: 20px;
+    margin-left: 15%;
+
+}
+
+
+.hero  p{
+    font-size: 14px;
+    color: #555;
+    margin: 0;
+    padding-top: 10px;
+}
+
+
 
 .form-row{
     display: flex;
@@ -98,9 +123,9 @@ label {
 
 #formbutton {
     
-    width: 15%;
+    width: 20%;
     height: 40px;
-    padding: 0px;
+    padding: 5px;
     background-color: #007BFF;
     color: white;
     border: none;
@@ -114,15 +139,20 @@ label {
 
 
 
-@media (max-width: 400px) {
+@media (max-width: 450px) {
     .regcontainer {
-        width: 80%;
+        width: 90%;
         border-radius: 10px;
+        display: block;
+
+        margin-bottom: 100px;
+        
     }
 
     form {
         width: 90%;
         margin: 10px auto;
+        display: block;
     }
 
     h1 {
@@ -134,8 +164,48 @@ label {
         width: 100%;
     }
 
-    button {
-        padding: 8px;
+
+    #formbutton {
+        width: 40%;
+        height: 40px;
+        padding: 0px;
+        background-color: #007BFF;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        margin: 10px auto 10px auto;
+        font-size: 18px;
+        font-weight: bold;
+        font-family: Arial, sans-serif;
     }
+
+    #firstname, #lastname,#middlename {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 10px;
+    margin-top: 5px;;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    
+}
+
+
+    .form-row{
+    display:block;
+    gap: 5px;
+    margin: 5px;
+   
+
+}
+
+.form-group{
+    display:block;
+
+}
+
+
+
+
 }
 

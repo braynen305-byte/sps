@@ -27,7 +27,7 @@
     <div class="forgotcontainer">
        <p>Enter your email address to receive a password reset link.</p>
         <form id="forgotpass-form" action="/pages/forgotpass.php" method="post">
-            <label for="forgotpass-email">Enter your email address:</label>
+            <label id="form-label" for="forgotpass-email">Enter your email address:</label>
             <input type="email" name="email" id="forgotpass-email" placeholder="Email">
             <button type="submit">Reset Password</button>
         </form>

@@ -18,15 +18,15 @@
 
         </ul>
     </nav>
-    <img src="../images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
     <section class="hero">
-        <div class="hero-content">  
+            <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
+            <div class="hero-content">
             <h1>Welcome to the Employee Registration Page</h1>
-            <p>Please fill out the form below to create your account.</p>
+            
         </div>
     </section>
 
-
+<p id="login-instructions">Please login using the form below.</p>
 
             <div class="regcontainer">
 

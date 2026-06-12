@@ -6,7 +6,7 @@
 
 
 html, body {
-    height: 100%;
+    height: ;
     margin: 0;
     padding: 0;
     font-family: Arial, sans-serif;
@@ -24,6 +24,7 @@ nav {
     position: fixed;
     top: 0;
     left: 0;
+    z-index: 1000;
 
 }
 
@@ -56,17 +57,52 @@ nav ul li {
 }
 
 
-.hero-image {
+.hero {
+    position: relative;
+    margin-top: 45px;  /* Adjust for fixed nav */
+    margin-left: 0; 
+    overflow: hidden;
+}
 
+.hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.6));
+    pointer-events: none;
+}
+
+.hero-image {
     width: 100%;
     height: 220px;
     object-position: center 75%;
     object-fit: cover;
-    background-color: #000000;
-    margin-top: 45px; /* Adjust for fixed nav */
+    display: block;
 }
 
+.hero-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    color: white;
+    text-align: center;
+    padding: 0 1.5rem;
+}
 
+.hero-content h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+.hero-content p {
+    font-size: 1rem;
+    max-width: 720px;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
 
 .container {
     width: 350px;
@@ -75,19 +111,21 @@ nav ul li {
     border-radius: 20px 20px 20px 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     background-color: rgb(234, 234, 234);
-    margin: 5% auto 0% auto;
+    margin: 30px auto 0% auto;
     
 }
 
 .forgotcontainer {
     width: 500px;
     height: auto;
+    margin: 140px auto;
     border: 1px solid #ccc;
     border-radius: 20px 20px 20px 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     background-color: rgb(234, 234, 234);
     
 }
+
 
 
 .container h1 {
@@ -110,13 +148,7 @@ form{
    
 }
 
-label {
-   margin-bottom: 0px;
-   padding: 5px;
-   
-   
-  
-}
+
 
 
 #forgotpass-email {
@@ -139,10 +171,12 @@ label {
 
     padding-left: 0px 0px;
 }
+  
 
 #username, #password {
     width: 95%;
     padding: 10px;
+    margin-top: 5px;
     margin-bottom: 10px;
     border: 1px solid #ccc;
     border-radius: 5px;
@@ -175,30 +209,98 @@ footer {
 
 }
 
+#login-instructions {
+        font-size: 18px;
+        text-align: center;
+        margin-top:90px;
+        margin-bottom: 10px;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+    }
 
 
-@media (max-width: 400px) {
+
+
+
+
+
+
+@media (max-width: 450px) {
     .container {
-        width: 80%;
-        border-radius: 10px;
+        width: 290px;
+        border-radius: 20px;
+        margin: 10px auto 0 auto;
+        
+        padding-bottom: 15px;
     }
 
     form {
         width: 90%;
-        margin: 10px auto;
+        margin: 20px auto 10px auto;
     }
 
-    h1 {
-        height: 40px;
-        font-size: 18px;
+
+    .hero-image {
+    width: 100%;
+    height: 160px;
+    object-position: center 75%;
+    object-fit: cover;
+    display: block;
     }
 
-    label, #username, #password, button {
+    .hero-content h1 {
+    font-size: 1.5rem;
+    font-weight: 900;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+
+    #login-instructions {
+        font-size: 14px;
+        text-align: center;
+        margin-top: 50px;
+        margin-bottom: 0px;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+    }
+
+     
+
+   
+
+    #username, #password, button {
         width: 100%;
+        padding: 10px 5px;
+    }
+
+    label{
+        font-size: 16px;
+        padding: 3px 0px;
+        
+        display: block;
     }
 
     button {
         padding: 8px;
     }
+
+.container h1 {
+    margin: 0;
+   display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 45px;
+    color: #ffffff;
+    font-size: 16px;
+    background-color: #007BFF;
+    border-radius: 20px 20px 0px 0px;
 }
 
+
+#options {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 5px;
+    
+
+}

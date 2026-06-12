@@ -14,20 +14,21 @@
 
 <nav>
         <ul>
-            <li><a href=" ">Home</a></li>
-            <li><a href="../index.php">Login</a></li> 
+            <li><a href="/sps/index.php">Home</a></li>
+            <li><a href="/sps/index.php">Login</a></li> 
             <li><a href=" ">Support</a></li>
 
         </ul>
     </nav>
-    <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
     <section class="hero">
-        <div class="hero-content">  
+            <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
+            <div class="hero-content">
+            <h1>Welcome to the Employee SPS</h1>
             
         </div>
     </section>
 
-
+<p id="login-instructions">Please login using the form below.</p>
 
 
 
