@@ -2,6 +2,7 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    
 }   
 
 
@@ -12,6 +13,12 @@ html, body {
     font-family: Arial, sans-serif;
     background-color: #f4f4f4;
    
+}
+
+/* Prevent fixed nav/footer from overlapping page content */
+body {
+    padding-top: 45px; /* height of fixed nav */
+    padding-bottom: 120px; /* space for fixed footer */
 }
 
 
@@ -59,7 +66,7 @@ nav ul li {
 
 .hero {
     position: relative;
-    margin-top: 45px;  /* Adjust for fixed nav */
+    margin-top: 0;  /* spacing handled by body padding */
     margin-left: 0; 
     overflow: hidden;
 }
@@ -118,7 +125,7 @@ nav ul li {
 .forgotcontainer {
     width: 500px;
     height: auto;
-    margin: 140px auto;
+    margin: 70px auto;
     border: 1px solid #ccc;
     border-radius: 20px 20px 20px 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
@@ -148,12 +155,21 @@ form{
    
 }
 
+.form-description {
+    width: 90%;
+    font-size: 14px;
+    color: #555;
+    margin: 0 auto;
+    padding-top: 10px;
+}
+
 
 
 
 #forgotpass-email {
     width: 95%;
     padding: 10px;
+    margin-top: 5px;
     margin-bottom: 10px;
     border: 1px solid #ccc;
     border-radius: 5px;
@@ -167,7 +183,7 @@ form{
 .forgotcontainer  p {
     margin-top: 20px;
     font-size: 14px;
-    margin-left: 28px;
+    margin-left: auto;
 
     padding-left: 0px 0px;
 }
@@ -193,7 +209,6 @@ button {
     margin: 0px 0px 10px 0px;
 }
 
-
 footer {
     
     text-align: center;
@@ -204,9 +219,7 @@ footer {
     position: fixed;
     bottom: 0;
     left: 0;
-    
-   
-
+ 
 }
 
 #login-instructions {

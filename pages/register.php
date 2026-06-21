@@ -37,7 +37,8 @@
                         <div class="form-group">
                     <label for="firstname">First Name</label>
                     <input type="text" name="firstname" id="firstname" placeholder="First Name">
-</div>
+                    </div>
+
 <div class="form-group">
                     <label for="middlename">Middle Name</label>
                     <input type="text" name="middlename" id="middlename" placeholder="Middle Name">
@@ -58,8 +59,8 @@
                     </div>
 
 
-                    <div class="form-group">
-                    <label for="contact">Date of Birth</label>
+<div class="form-group">
+                    <label for="dob">Date of Birth</label>
                     <input type="date" name="dob" id="dob" placeholder="Date of Birth">
 </div>
                         <div class="form-group">
@@ -67,6 +68,19 @@
                     <input type="email" name="email" id="email" placeholder="Email">
 </div>
 </div>                
+
+
+
+<div class="form-row2">
+                        <div class="form-group">
+                    <label for="telephone">Telephone</label>
+                    <input type="tel" name="telephone" id="telephone" placeholder="Telephone">
+</div>
+                    <div class="form-group">
+                    <label for="address">Address</label>
+                    <textarea name="address" id="address" placeholder="Address"></textarea>
+</div>
+</div>
 
 
                     <div class="form-row">
@@ -82,11 +96,18 @@
 
 
                     
+                    
+                    <button id="formbutton" type="submit">Register</button> 
 
-                    <button id="formbutton" type="submit">Register</button>
+                    
+                    <p class="account-exists">Already have an account? <a href="../index.php">Login here</a>.</p>
+
+
                 </form>
 
             </div>
+
+
 <footer>
     <p>&copy; 2024 Service Portal. All rights reserved.</p> 
 </footer>

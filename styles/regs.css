@@ -5,16 +5,21 @@
     box-sizing: border-box;
 }
 
+
+
+
 .regcontainer {
-    width: 70%;
+   
+    width: 60%;
+    min-height: 550px;
     height: auto;
-    margin: 0px auto;
+    margin: 0px auto 100px auto; /* provide space for fixed footer and post-form content */
     border: 1px solid #ccc;
     border-radius: 20px 20px 20px 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     background-color: rgb(234, 234, 234);
     
-    margin-bottom: 10px;
+    
     
 }
 .regcontainer h1 {
@@ -30,32 +35,6 @@
     font-family: Arial, sans-serif;
 }
 
-form{
-    font-size: 15px;
-    font-weight: bold;
-    width: 80%;
-    margin: 0px auto;
-    margin-bottom: 20px;
-   
-}
-
-label {
-   margin-bottom: 0px;
-   padding: 5px;
-   
-   
-  
-}
-
-
-#gender {
-    width: 85%;
-    padding: 10px;
-    margin-bottom: 10px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-
-}
 .hero{
     display: flex;
     flex-direction: column;
@@ -66,7 +45,6 @@ label {
 
 }
 
-
 .hero  p{
     font-size: 14px;
     color: #555;
@@ -75,14 +53,31 @@ label {
 }
 
 
+form{
+    font-size: 15px;
+    font-weight: bold;
+    width: 80%;
+    margin: 0px auto;
+   
+   
+}
 
 .form-row{
     display: flex;
     flex-direction:row;
     gap: 5px;
     margin: 5px;
+    height: 90px;
    
+}
 
+.form-row2{
+    display: flex;
+    flex-direction:row;
+    gap: 5px;
+    margin: 5px;
+    height: 120px;
+   
 }
 
 .form-group{
@@ -92,31 +87,47 @@ label {
 
 
 
+label {
+   margin-top: 0px;
+   display: block;
+   padding: 5px;
+   
+}
 
-#firstname, #lastname,#middlename {
-    width: 90%;
+#gender {
+    width: 85%;
     padding: 10px;
     margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+
+}
+
+#firstname, #lastname,#middlename,#dob, #gender, #email, #password, #confirm_password {
+    width: 90%;
+    padding: 10px;
     margin-top: 5px;;
     border: 1px solid #ccc;
     border-radius: 5px;
     
 }
 
-#dob, #gender, #email{
-    width: 90%;
+#telephone {
+    display: block;
+    width: 40%;
     padding: 10px;
-    margin-bottom: 10px;
     margin-top: 5px;;
     border: 1px solid #ccc;
     border-radius: 5px;
 }
 
-#password, #confirm_password {
+#address {
+    display: block;
+    height: 80px;
     width: 90%;
     padding: 10px;
+    margin-top: 5px;
     margin-bottom: 10px;
-    margin-top: 5px;;
     border: 1px solid #ccc;
     border-radius: 5px;
 }
@@ -131,28 +142,40 @@ label {
     border: none;
     border-radius: 5px;
     cursor: pointer;
-    margin: 10px auto 20px auto;
+    margin: 10px auto 0px 5px;
     font-size: 18px;
     font-weight: bold;
     font-family: Arial, sans-serif;
 }
 
+.account-exists {
+    display: inline-block;
+    margin-top: 20px;
+    margin-left: 20px;
+    font-size: 14px;
+    text-align: center;
+}
 
 
-@media (max-width: 450px) {
+
+@media (max-width: 768px) {
     .regcontainer {
         width: 90%;
+        height: auto;
         border-radius: 10px;
         display: block;
 
         margin-bottom: 100px;
         
+        margin-bottom: 180px;
     }
 
     form {
         width: 90%;
         margin: 10px auto;
         display: block;
+        height: auto;
+        padding-bottom: 20px;
     }
 
     h1 {
@@ -162,6 +185,7 @@ label {
 
     label, #username, #password, button {
         width: 100%;
+        display: block;
     }
 
 
@@ -174,10 +198,11 @@ label {
         border: none;
         border-radius: 5px;
         cursor: pointer;
-        margin: 10px auto 10px auto;
+        margin: 30px auto 0px auto;
         font-size: 18px;
         font-weight: bold;
         font-family: Arial, sans-serif;
+        display: block;
     }
 
     #firstname, #lastname,#middlename {
@@ -187,24 +212,51 @@ label {
     margin-top: 5px;;
     border: 1px solid #ccc;
     border-radius: 5px;
+    display: block;
     
 }
 
 
-    .form-row{
-    display:block;
-    gap: 5px;
-    margin: 5px;
-   
+    .form-row, .form-row2 {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin: 15px;
+        height: auto;
+        border:#007BFF 1px solid;
+    }
 
+    .form-group {
+        display: block;
+        width: 100%;
+    }
+
+    #firstname, #lastname, #middlename, #dob, #gender, #email, #password, #confirm_password, #telephone {
+        width: 100%;
+        display: block;
+    }
+
+    #address {
+        height: auto;
+        width: 100%;
+        padding: 10px;
+        margin-top: 5px;
+        margin-bottom: 10px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        display: block;
+    }
+
+    
+
+
+.account-exists {
+    
+    margin-top: 20px;
+    margin-left: 20px;
+    font-size: 14px;
+    text-align: center;
 }
-
-.form-group{
-    display:block;
-
-}
-
-
 
 
 }
