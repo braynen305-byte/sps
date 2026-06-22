@@ -1,29 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="../styles/main.css">
-    
-    <title>Forgot Password</title>
-</head>
-<body>
+<?php
+$title = "Forgot Password";
+require_once '../includes/header.php';
+?>
 
-<nav>
-        <ul>
-            <li><a href="/sps/index.php">Home</a></li>
-            <li><a href="/sps/index.php">Login</a></li> 
-            <li><a href=" ">Support</a></li>
-
-        </ul>
-    </nav>
-    <section class="hero">
-            <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
-            <div class="hero-content">
-            <h1>Welcome to the Employee SPS</h1>
-            
-        </div>
-    </section>
 
 <p id="login-instructions">Please login using the form below.</p>
     
@@ -37,9 +16,4 @@
         </form>
     </div>
 
-<footer>
-    <p>&copy; 2024 Service Portal. All rights reserved.</p> 
-</footer
-
-</body>
-</html>
+<?php require_once '../includes/footer.php'; ?>

@@ -5,11 +5,7 @@
     box-sizing: border-box;
 }
 
-
-
-
 .regcontainer {
-   
     width: 60%;
     min-height: 550px;
     height: auto;
@@ -18,13 +14,12 @@
     border-radius: 20px 20px 20px 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     background-color: rgb(234, 234, 234);
-    
-    
-    
+       
 }
+
 .regcontainer h1 {
     margin: 0 0 15px 0;
-   display: flex;
+    display: flex;
     justify-content: center;
     align-items: center;
     height: 45px;
@@ -35,31 +30,13 @@
     font-family: Arial, sans-serif;
 }
 
-.hero{
-    display: flex;
-    flex-direction: column;
-    align-items: left;
-    margin-top: 20px;
-    margin-bottom: 20px;
-    margin-left: 15%;
 
-}
 
 .hero  p{
     font-size: 14px;
     color: #555;
     margin: 0;
     padding-top: 10px;
-}
-
-
-form{
-    font-size: 15px;
-    font-weight: bold;
-    width: 80%;
-    margin: 0px auto;
-   
-   
 }
 
 .form-row{
@@ -84,8 +61,6 @@ form{
     flex: 1;
 
 }
-
-
 
 label {
    margin-top: 0px;
@@ -159,37 +134,34 @@ label {
 
 
 @media (max-width: 768px) {
-    .regcontainer {
+.regcontainer {
         width: 90%;
         height: auto;
-        border-radius: 10px;
+        border-radius: 20px;
         display: block;
-
         margin-bottom: 100px;
-        
         margin-bottom: 180px;
-    }
+}
 
-    form {
-        width: 90%;
+form {
+        width: 100%;
         margin: 10px auto;
         display: block;
         height: auto;
         padding-bottom: 20px;
-    }
+}
 
-    h1 {
+h1 {
         height: 40px;
         font-size: 18px;
-    }
+}
 
-    label, #username, #password, button {
+label, #username, #password, button {
         width: 100%;
         display: block;
-    }
+}
 
-
-    #formbutton {
+#formbutton {
         width: 40%;
         height: 40px;
         padding: 0px;
@@ -203,9 +175,9 @@ label {
         font-weight: bold;
         font-family: Arial, sans-serif;
         display: block;
-    }
+}
 
-    #firstname, #lastname,#middlename {
+#firstname, #lastname,#middlename {
     width: 100%;
     padding: 10px;
     margin-bottom: 10px;
@@ -216,27 +188,26 @@ label {
     
 }
 
-
-    .form-row, .form-row2 {
+.form-row, .form-row2 {
         display: flex;
         flex-direction: column;
         gap: 15px;
         margin: 15px;
         height: auto;
-        border:#007BFF 1px solid;
-    }
+        
+}
 
-    .form-group {
+.form-group {
         display: block;
         width: 100%;
-    }
+}
 
-    #firstname, #lastname, #middlename, #dob, #gender, #email, #password, #confirm_password, #telephone {
+#gender, #email, #password, #confirm_password, #telephone {
         width: 100%;
         display: block;
-    }
+}
 
-    #address {
+#address {
         height: auto;
         width: 100%;
         padding: 10px;
@@ -245,10 +216,7 @@ label {
         border: 1px solid #ccc;
         border-radius: 5px;
         display: block;
-    }
-
-    
-
+}
 
 .account-exists {
     
@@ -257,7 +225,6 @@ label {
     font-size: 14px;
     text-align: center;
 }
-
 
 }
 

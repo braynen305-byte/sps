@@ -1,30 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="../styles/regs.css">
-    <link rel="stylesheet" href="../styles/main.css">
-    <title>Employee Registration</title>
-</head>
+<?php
 
+$title = "Employee Registration";
+require_once 'includes/header.php';
 
-<body>
-    <nav>
-        <ul>
-            <li><a href=" ">Home</a></li>
-            <li><a href="../index.php">Login</a></li> 
-            <li><a href=" ">Support</a></li>
-
-        </ul>
-    </nav>
-    <section class="hero">
-            <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
-            <div class="hero-content">
-            <h1>Welcome to the Employee Registration Page</h1>
-            
-        </div>
-    </section>
+?>
 
 <p id="login-instructions">Please login using the form below.</p>
 
@@ -70,7 +49,6 @@
 </div>                
 
 
-
 <div class="form-row2">
                         <div class="form-group">
                     <label for="telephone">Telephone</label>
@@ -108,9 +86,4 @@
             </div>
 
 
-<footer>
-    <p>&copy; 2024 Service Portal. All rights reserved.</p> 
-</footer>
-
-</body>
-</html>
+<?php require_once '../includes/footer.php'; ?>
