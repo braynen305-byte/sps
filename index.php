@@ -1,28 +1,26 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <link rel="stylesheet" href="styles/maIn.css">
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Service Portal - Login</title>
-</head>
-<body>
-    <div class="container">
-        <h1>SERVICE PORTAL LOGIN</h1>
-        <form action="login.php" method="post">
-            <label for="username">Username</label>
-            <input type="text" name="username" id="username" placeholder="Username">
-            <label for="password">Password</label>
-            <input type="password" name="password" id="password" placeholder="Password">
-            <button type="submit">Login</button>
-            <button type="submit">Create Account</button>
-            <div id="options">  
-        <p id="forgtPasswordBttn"><a href="forgot_password.php">Forgot Password</a></p>
+<?php
+$title = "Service Portal - Login";
+require_once 'includes/header.php';
+?>
+
+<div class="login-selection">
+    <h1>Choose who is logging in</h1>
+    <div class="login-options">
+        <div class="login-card">
+            <h2>Customer</h2>
+            <p>Login with customer credentials to access your account.</p>
+            <a href="customer-login.php">Customer Login</a>
         </div>
-        </form>
-            
+        <div class="login-card">
+            <h2>Service Technician</h2>
+            <p>Login as a service technician to access the service portal.</p>
+            <a href="login.php">Technician Login</a>
+        </div>
     </div>
-</body>
-</html> 
-</body>
-</html>
+</div>
+
+
+
+<?php
+require_once 'includes/footer.php';
+?>
