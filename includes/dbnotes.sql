@@ -26,3 +26,9 @@ CREATE TABLE `sps`.`users` (
     `gender` VARCHAR(10) NOT NULL , 
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP , 
     PRIMARY KEY (`id`)) ENGINE = InnoDB;
+
+
+
+
+$sql = "INSERT INTO staff (`firstname`, `middlename`, `lastname`, `email`, `gender`, `date_of_birth`, `telephone`, `residence`, `password`) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";

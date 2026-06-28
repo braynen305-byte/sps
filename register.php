@@ -13,6 +13,14 @@ include "includes/signup.php";
 
                 <h1>Employee Registration</h1>
 
+                <?php if (!empty($successMessage)) : ?>
+                    <p style="color: green; font-weight: bold;"><?php echo htmlspecialchars($successMessage); ?></p>
+                <?php endif; ?>
+
+                <?php if (!empty($emailError) && !empty($email)) : ?>
+                    <p style="color: red; font-weight: bold;"><?php echo htmlspecialchars($emailError); ?></p>
+                <?php endif; ?>
+
                 <form action="" method="post">
                     <div class="form-row">
                         <div class="form-group">
@@ -65,11 +73,11 @@ include "includes/signup.php";
 
                     <div class="form-row">
                         <div class="form-group">
-                    <label for="password">Password <span style="display: inline-block; color: red;"><?php if (empty($password)){echo $passwordError;} ?></span></label>
+                    <label for="password">Password <span style="display: inline-block; color: red;"><?php echo $confirm_passwordError . $passwordError; ?></span></label>
                     <input type="password" name="password" id="password" placeholder="Password" value="<?php echo @$_POST['password'] ?>">
 </div>
                     <div class="form-group">
-                    <label for="confirm_password">Confirm Password <span style="display: inline-block; color: red;"><?php echo $confirm_passwordError; ?></span></label>
+                    <label for="confirm_password">Confirm Password <span style="display: inline-block; color: red;"><?php echo $confirm_passwordError . $passwordError; ?></span></label>
                     <input type="password" name="confirm_password" id="confirm_password" placeholder="Confirm Password" value="<?php echo @$_POST['confirm_password'] ?>">
 </div>
 </div>

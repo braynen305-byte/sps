@@ -1,5 +1,6 @@
 <?php
-$firstname = $middlename = $lastname = $gender = $dob = $email = $telephone = $address = $password = $confirm_password = null;
+require 'dbh.inc.php';
+$firstname = $middlename = $lastname = $gender = $dob = $email = $telephone = $address = $password = $confirm_password = "";
 $firstnameError = $middlenameError = $lastnameError = $genderError = $dobError = $emailError = $telephoneError = $addressError = $passwordError = $confirm_passwordError = "";
 $successMessage = "";
 
@@ -19,47 +20,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     //firstname validation//
         if(empty($userdata['firstname'])){
                 $firstnameError = "First name required.";
-                print_r($userdata);
+                
         }
             elseif(!preg_match("/^[a-zA-Z]+(?: [a-zA-Z]+)*$/", $userdata['firstname'] )) {
                 
                 
                 $firstnameError = "Letters & Space only";
-                print_r($userdata);
+                
             } else{
                     $firstname = cleanInputData($userdata['firstname']);
-                    print_r($userdata);
+                    
             }
     //middlename validation//     
 
   if(empty($userdata['middlename'])){
                 $middlenameError = "Middle name required.";
-                print_r($userdata);
+                
         }
             elseif(!preg_match("/^[a-zA-Z]+(?: [a-zA-Z]+)*$/", $userdata['middlename'] )) {
                 
                 
                 $middlenameError = "Letters & Space only";
-                print_r($userdata);
+                
             } else{
                     $middlename = cleanInputData($userdata['middlename']);
-                    print_r($userdata);
+                    
             }
 
     //lastname validation
 
-        if(empty($userdata['lastename'])){
-                $lastenameError = "Last name required.";
-                print_r($userdata);
+        if(empty($userdata['lastname'])){
+                $lastnameError = "Last name required.";
+                
         }
             elseif(!preg_match("/^[a-zA-Z]+(?: [a-zA-Z]+)*$/", $userdata['lastname'] )) {
                 
                 
                 $lastnameError = "Letters & Space only";
-                print_r($userdata);
+                
             } else{
                     $lastname = cleanInputData($userdata['lastname']);
-                    print_r($userdata);
+                        
             }
 
     //gender validation//
@@ -68,16 +69,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if(empty($userdata['gender'])){
                 $genderError = "Gender required.";
-                print_r($userdata);
+                
         }
             elseif(!preg_match("/^[a-zA-Z]+(?: [a-zA-Z]+)*$/", $userdata['gender'] )) {
                 
                 
                 $genderError = "Letters & Space only";
-                print_r($userdata);
+                
             } else{
-                    $middlename = cleanInputData($userdata['gender']);
-                    print_r($userdata);
+                    $gender = cleanInputData($userdata['gender']);
+                    
             }
 
 
@@ -86,11 +87,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if(empty($userdata['dob'])){
                 $dobError = "Date of Birth required.";
-                print_r($userdata);
+               
         }
         else{
                     $dob = cleanInputData($userdata['dob']);
-                    print_r($userdata);
+                    ;
             }
 
 
@@ -101,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }else if(!filter_var($userdata['email'], FILTER_VALIDATE_EMAIL)){
                 $emailError = "Invalid email format.";
         }else{
-            $email = cleanInputData($userdata['email']);
+            $email = strtolower(trim(cleanInputData($userdata['email'])));
 
         }
 
@@ -121,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if(empty($userdata['address'])){
                 $addressError = "Address required.";
         }else{
-            $address = cleanInputData($userdata['address']);
+            $address = $userdata['address'];
         }
 
 
@@ -157,52 +158,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
             }
+
+
     
     // Check if there are any errors
-    $hasErrors = !empty($firstnameError) || !empty($middlenameError) || !empty($lastnameError) || 
-                 !empty($genderError) || !empty($dobError) || !empty($emailError) || 
-                 !empty($telephoneError) || !empty($addressError) || !empty($passwordError) || 
-                 !empty($confirm_passwordError);
+    $errorList = [
+        $firstnameError,
+        $middlenameError,
+        $lastnameError,
+        $genderError,
+        $dobError,
+        $emailError,
+        $telephoneError,
+        $addressError,
+        $passwordError,
+        $confirm_passwordError,
+    ];
+   
     
-    // If no errors, process the form and inject into database
-    if(!$hasErrors) {
-        // Database connection
-        $servername = "localhost";
-        $username = "root";
-        $password_db = "";
-        $database = "sps"; // Change to your database name
-        
-        $conn = new mysqli($servername, $username, $password_db, $database);
-        
-        // Check connection
-        if ($conn->connect_error) {
-            die("Connection failed: " . $conn->connect_error);
-        }
-        
-        // Prepare SQL statement
-        $sql = "INSERT INTO users (firstname, middlename, lastname, gender, dob, email, telephone, address, password) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        
-        $stmt = $conn->prepare($sql);
-        
-        // Hash password for security
-        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-        
-        // Bind parameters
-        $stmt->bind_param("sssssssss", $firstname, $middlename, $lastname, $gender, $dob, $email, $telephone, $address, $hashed_password);
-        
-        // Execute statement
-        if ($stmt->execute()) {
-            $successMessage = "Registration successful! User account created.";
-            // Clear form data
-            $firstname = $middlename = $lastname = $gender = $dob = $email = $telephone = $address = $password = $confirm_password = null;
+    $hasErrors = count(array_filter($errorList, 'strlen')) > 0;
+   
+
+    
+    // If no validation errors, insert user into database
+    if (!$hasErrors) {
+        $checkStmt = $conn->prepare("SELECT id FROM staff WHERE LOWER(email) = LOWER(?) LIMIT 1");
+        $checkStmt->execute([$email]);
+
+        if ($checkStmt->fetch()) {
+            $emailError = 'An account with this email already exists.';
         } else {
-            $emailError = "Error: " . $stmt->error;
+            // Hash the password
+            $password_hashed = password_hash($password, PASSWORD_DEFAULT);
+
+            // Prepare insert statement using the actual staff table columns
+            $sql = "INSERT INTO staff (firstname, middlename, lastname, email, gender, date_of_birth, telephone, residence, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+            $stmt = $conn->prepare($sql);
+            if ($stmt) {
+                $params = [$firstname, $middlename, $lastname, $email, $gender, $dob, $telephone, $address, 'technician'];
+                try {
+                    if ($stmt->execute($params)) {
+                        $successMessage = 'Registration successful.';
+                        header('Location: /sps/register.php?success=1');
+                        exit;
+                    }
+                } catch (PDOException $e) {
+                    if ($e->getCode() === '23000') {
+                        $emailError = 'An account with this email already exists.';
+                    } else {
+                        $emailError = 'Failed to register user.';
+                    }
+                }
+                $stmt = null;
+            } else {
+                $emailError = 'Database error.';
+            }
         }
-        
-        $stmt->close();
-        $conn->close();
     }
+    
 }
 
 
