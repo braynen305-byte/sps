@@ -11,7 +11,7 @@ require_once 'includes/header.php';
         
     <h1>SERVICE PORTAL LOGIN</h1>
 
-        <form action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" method="post">
+        <form action="" method="post">
 
 
             <label for="username">Username</label>

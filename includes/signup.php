@@ -3,6 +3,7 @@ require 'dbh.inc.php';
 $firstname = $middlename = $lastname = $gender = $dob = $email = $telephone = $address = $password = $confirm_password = "";
 $firstnameError = $middlenameError = $lastnameError = $genderError = $dobError = $emailError = $telephoneError = $addressError = $passwordError = $confirm_passwordError = "";
 $successMessage = "";
+$login_instruction = "Please login using the form below.";
 
 
 
@@ -12,6 +13,7 @@ function cleanInputData($data){
     $data = htmlspecialchars($data);
     return $data;
 }
+$login_instruction = "Please login using the form below.";
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Retrieve form data
@@ -191,15 +193,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Hash the password
             $password_hashed = password_hash($password, PASSWORD_DEFAULT);
 
-            // Prepare insert statement using the actual staff table columns
-            $sql = "INSERT INTO staff (firstname, middlename, lastname, email, gender, date_of_birth, telephone, residence, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+            // Prepare insert statement including the password column
+            $sql = "INSERT INTO staff (firstname, middlename, lastname, email, gender, date_of_birth, telephone, residence, role, password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
             $stmt = $conn->prepare($sql);
             if ($stmt) {
-                $params = [$firstname, $middlename, $lastname, $email, $gender, $dob, $telephone, $address, 'technician'];
+                $params = [$firstname, $middlename, $lastname, $email, $gender, $dob, $telephone, $address, 'technician', $password_hashed];
                 try {
                     if ($stmt->execute($params)) {
-                        $successMessage = 'Registration successful.';
-                        header('Location: /sps/register.php?success=1');
+                        header('Location: /sps/success.php');
                         exit;
                     }
                 } catch (PDOException $e) {

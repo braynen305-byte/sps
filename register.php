@@ -2,24 +2,29 @@
 $title = "Employee Registration";
 require_once 'includes/header.php';
 include "includes/signup.php";
-
-
 ?>
 
 
-<p id="login-instructions">Please login using the form below.</p>
+
+<?php 
+if(empty($successMessage) && empty($emailError)){
+        echo '<p id="login-instructions">' . $login_instruction . '</p>';
+}
+if (!empty($successMessage)) : ?>
+                    <p id="login-instructions" style="color: green; font-weight: bold;"><?php echo htmlspecialchars($successMessage); ?></p>
+                <?php endif; ?>
+
+                <?php if (!empty($emailError) && !empty($email)) : ?>
+                    <p id="login-instructions" style="color: red; font-weight: bold;"><?php echo htmlspecialchars($emailError); ?></p>
+                <?php endif; ?>
+
+
 
             <div class="regcontainer">
 
                 <h1>Employee Registration</h1>
 
-                <?php if (!empty($successMessage)) : ?>
-                    <p style="color: green; font-weight: bold;"><?php echo htmlspecialchars($successMessage); ?></p>
-                <?php endif; ?>
-
-                <?php if (!empty($emailError) && !empty($email)) : ?>
-                    <p style="color: red; font-weight: bold;"><?php echo htmlspecialchars($emailError); ?></p>
-                <?php endif; ?>
+                
 
                 <form action="" method="post">
                     <div class="form-row">
