@@ -1,25 +1,24 @@
 <?php
-$title = "Service Portal - Login";
+$title = "Service Portal";
 require_once 'includes/header.php';
 ?>
 
 <div class="login-selection">
-    <h1>Choose who is logging in</h1>
+    <h1>Welcome to the Service Portal</h1>
+    <p>Access your account, manage work orders, and stay connected with the team.</p>
     <div class="login-options">
         <div class="login-card">
-            <h2>Customer</h2>
-            <p>Login with customer credentials to access your account.</p>
-            <a href="customer-login.php">Customer Login</a>
+            <h2>Sign In</h2>
+            <p>Already have an account? Log in and continue to your dashboard.</p>
+            <a href="login.php">Login</a>
         </div>
         <div class="login-card">
-            <h2>Service Technician</h2>
-            <p>Login as a service technician to access the service portal.</p>
-            <a href="login.php">Technician Login</a>
+            <h2>Register</h2>
+            <p>Create an account to get started with the service portal.</p>
+            <a href="register.php">Create Account</a>
         </div>
     </div>
 </div>
-
-
 
 <?php
 require_once 'includes/footer.php';

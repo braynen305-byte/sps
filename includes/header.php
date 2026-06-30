@@ -1,3 +1,8 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 
@@ -17,8 +22,22 @@
 
 <nav>
         <ul>
-            <li><a href="/sps/index.php">Home</a></li>
+            <li><a href="/sps/home.php">Home</a></li>
             <?php if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true): ?>
+                <li>
+                    <?php
+                    $role = strtolower($_SESSION['role'] ?? '');
+                    $dashboardUrl = '/sps/pages/dashboard.php';
+                    if ($role === 'technician') {
+                        $dashboardUrl = '/sps/pages/technician_dashboard.php';
+                    } elseif ($role === 'staff') {
+                        $dashboardUrl = '/sps/pages/staff_dashboard.php';
+                    } elseif ($role === 'admin') {
+                        $dashboardUrl = '/sps/pages/admin_dashboard.php';
+                    }
+                    ?>
+                    <a href="<?php echo $dashboardUrl; ?>">Dashboard</a>
+                </li>
                 <li><a href="/sps/logout.php">Logout</a></li>
             <?php else: ?>
                 <li><a href="/sps/login.php">Login</a></li>
