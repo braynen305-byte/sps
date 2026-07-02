@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             error_log('Database connection failed: ' . $mysqli->connect_error);
             $errorMessage = 'Unable to connect to the database.';
         } else {
-            $stmt = $mysqli->prepare('SELECT id, email, password, role FROM staff WHERE email = ? LIMIT 1');
+            $stmt = $mysqli->prepare('SELECT id, firstname, lastname, email, password, role FROM staff WHERE email = ? LIMIT 1');
             if (!$stmt) {
                 error_log('Prepare failed: ' . $mysqli->error);
                 $errorMessage = 'Login failed.';
@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->store_result();
 
                 if ($stmt->num_rows === 1) {
-                    $stmt->bind_result($userId, $dbEmail, $dbPasswordHash, $dbRole);
+                    $stmt->bind_result($userId, $dbFirstName, $dbLastName, $dbEmail, $dbPasswordHash, $dbRole);
                     $stmt->fetch();
 
                     if (password_verify($password, $dbPasswordHash)) {
@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $_SESSION['email'] = $dbEmail;
                         $_SESSION['role'] = $dbRole;
                         $_SESSION['logged_in'] = true;
+                        $_SESSION['full_name'] = trim($dbFirstName . ' ' . $dbLastName);
 
                         $stmt->close();
                         $mysqli->close();

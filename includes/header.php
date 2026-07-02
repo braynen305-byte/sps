@@ -40,7 +40,7 @@ if (session_status() === PHP_SESSION_NONE) {
                 </li>
                 <li><a href="/sps/logout.php">Logout</a></li>
             <?php else: ?>
-                <li><a href="/sps/login.php">Login</a></li>
+                <li><a href="/sps/index.php">Login</a></li>
             <?php endif; ?>
             <li><a href=" ">Support</a></li>
 
