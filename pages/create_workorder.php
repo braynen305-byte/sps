@@ -224,7 +224,7 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label>"form-group">
+            
                 <label>Client Name *</label>
                 <input type="text" name="client_name" required>
             </div>
