@@ -49,7 +49,7 @@ if (session_status() === PHP_SESSION_NONE) {
     <section class="hero">
             <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
             <div class="hero-content">
-            <h1>Welcome to the Employee SPS</h1>
+            
             
         </div>
     </section>

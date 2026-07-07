@@ -42,6 +42,8 @@ require_once '../includes/header.php';
         padding: 30px;
         box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         margin-top: 20px;
+        width: 85%;
+        margin: 0 auto;
     }
     .dashboard-container h3 {
         background-color: #007BFF;
@@ -93,8 +95,12 @@ require_once '../includes/header.php';
     }
 </style>
 
-<h2>Admin Dashboard</h2>
-<p>Welcome back, <?php echo htmlspecialchars($adminName, ENT_QUOTES, 'UTF-8'); ?>.</p>
+<div class="page-header">
+    <h2 style="margin: 0;">Admin Dashboard</h2>
+    <a href="/sps/pages/admin_dashboard.php" style="color: #007BFF; text-decoration: none;">← Back</a>
+</div>
+
+<p class="greeting">Welcome back, <?php echo htmlspecialchars($adminName, ENT_QUOTES, 'UTF-8'); ?>.</p>
 
 <div class="dashboard-container">
     <h3>Quick Actions</h3>
