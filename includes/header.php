@@ -27,14 +27,8 @@ if (session_status() === PHP_SESSION_NONE) {
                 <li>
                     <?php
                     $role = strtolower($_SESSION['role'] ?? '');
+                    // always point dashboard link to the central dashboard page
                     $dashboardUrl = '/sps/pages/dashboard.php';
-                    if ($role === 'technician') {
-                        $dashboardUrl = '/sps/pages/technician_dashboard.php';
-                    } elseif ($role === 'staff') {
-                        $dashboardUrl = '/sps/pages/staff_dashboard.php';
-                    } elseif ($role === 'admin') {
-                        $dashboardUrl = '/sps/pages/admin_dashboard.php';
-                    }
                     ?>
                     <a href="<?php echo $dashboardUrl; ?>">Dashboard</a>
                 </li>
@@ -53,3 +47,4 @@ if (session_status() === PHP_SESSION_NONE) {
             
         </div>
     </section>
+    <div class="page-body">

@@ -8,6 +8,49 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolo
 
 require_once '../includes/dbh.inc.php';
 
+// Ensure `priority` column exists and backfill from `workorder_edits` if present
+$migration_error = '';
+try {
+        $colStmt = $conn->query("SHOW COLUMNS FROM workorders LIKE 'priority'");
+        $hasPriority = ($colStmt && $colStmt->rowCount() > 0);
+        if (!$hasPriority) {
+                $conn->exec("ALTER TABLE workorders ADD COLUMN `priority` VARCHAR(20) NOT NULL DEFAULT 'Normal'");
+                $hasPriority = true;
+        }
+
+        $tblStmt = $conn->query("SHOW TABLES LIKE 'workorder_edits'");
+        $hasEdits = ($tblStmt && $tblStmt->rowCount() > 0);
+        if ($hasPriority && $hasEdits) {
+                $updateSql = "UPDATE workorders w
+JOIN (
+    SELECT we1.workorder_id, we1.new_value
+    FROM workorder_edits we1
+    JOIN (
+        SELECT workorder_id, MAX(edited_at) AS maxt
+        FROM workorder_edits
+        WHERE field_name = 'priority'
+        GROUP BY workorder_id
+    ) we2 ON we1.workorder_id = we2.workorder_id AND we1.edited_at = we2.maxt
+    WHERE we1.field_name = 'priority'
+) latest ON w.id = latest.workorder_id
+SET w.priority = latest.new_value";
+                $conn->exec($updateSql);
+        }
+} catch (PDOException $e) {
+        $migration_error = $e->getMessage();
+}
+
+// Handle delete requests (admin only - page already restricted)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete') {
+    $delId = (int)($_POST['workorder_id'] ?? 0);
+    if ($delId) {
+        $delStmt = $conn->prepare('DELETE FROM workorders WHERE id = ?');
+        $delStmt->execute([$delId]);
+    }
+    header('Location: /sps/pages/workorder_dashboard.php');
+    exit;
+}
+
 $title = 'Work Orders Dashboard';
 require_once '../includes/header.php';
 
@@ -169,7 +212,10 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </style>
 
 <div class="dashboard-header">
-    <h2>Work Orders Dashboard</h2>
+    <div style="display:flex; align-items:center; gap:12px;">
+        <a href="/sps/pages/admin_dashboard.php" class="back-link">&larr; Admin Dashboard</a>
+        <h2>Work Orders Dashboard</h2>
+    </div>
     <a href="/sps/pages/create_workorder.php" class="create-btn">+ Create New Work Order</a>
 </div>
 
@@ -200,6 +246,7 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <th>Location</th>
                 <th>Order Date</th>
                 <th>Status</th>
+                <th>Priority</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -213,13 +260,20 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td>
                         <?php 
                             $status = 'Open';
-                            if ($wo['time_departed']) {
+                            if (!empty($wo['time_departed'])) {
                                 $status = 'Completed';
-                            } elseif ($wo['time_entered']) {
+                            } elseif (!empty($wo['time_entered'])) {
                                 $status = 'In Progress';
                             }
                             echo htmlspecialchars($status, ENT_QUOTES, 'UTF-8');
                         ?>
+                    </td>
+                    <td>
+                        <?php
+                            $rawPriority = isset($wo['priority']) ? (string)$wo['priority'] : 'Normal';
+                            $isHigh = (strtolower(trim($rawPriority)) === 'high');
+                        ?>
+                        <span style="<?php echo $isHigh ? 'color:#721c24;background:#f8d7da;padding:4px 8px;border-radius:4px;' : ''; ?>"><?php echo htmlspecialchars($rawPriority, ENT_QUOTES, 'UTF-8'); ?></span>
                     </td>
                     <td>
                         <div class="action-links">

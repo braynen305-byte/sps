@@ -1,6 +1,6 @@
 <?php
-// Redirect to workorder dashboard for backward compatibility
-header('Location: /sps/pages/workorder_dashboard.php');
+// Redirect to central dashboard for backward compatibility / avoid admin-only page
+header('Location: /sps/pages/dashboard.php');
 exit;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

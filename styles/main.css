@@ -14,6 +14,12 @@ html, body {
    
 }
 
+/* Make a page wrapper so footer flows after content (no clipping) */
+body { display: flex; flex-direction: column; min-height: 100vh; }
+.page-body { flex: 1; }
+/* ensure content has room above the footer to avoid clipping on some pages */
+.page-body { padding-bottom: 80px; }
+
 nav {
     background-color: #0056b3;
     width: 100%;
@@ -208,9 +214,8 @@ footer {
     background-color: #333;
     color: white;
     width: 100%;
-    position: fixed;
-    bottom: 0;
-    left: 0;
+    position: relative;
+    margin-top: 40px;
  
 }
 

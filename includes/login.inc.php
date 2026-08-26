@@ -1,8 +1,10 @@
+
 <?php
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
-
+include "includes/dbh.inc.php";
 $errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -39,23 +41,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (password_verify($password, $dbPasswordHash)) {
                         $_SESSION['user_id'] = $userId;
                         $_SESSION['email'] = $dbEmail;
-                        $_SESSION['role'] = $dbRole;
+                        // normalize role to avoid trailing spaces/case mismatches
+                        $normalizedRole = strtolower(trim((string)$dbRole));
+                        $_SESSION['role'] = $normalizedRole;
                         $_SESSION['logged_in'] = true;
                         $_SESSION['full_name'] = trim($dbFirstName . ' ' . $dbLastName);
 
                         $stmt->close();
                         $mysqli->close();
 
-                        $redirectPage = '/sps/pages/dashboard.php';
-                        if (strtolower($dbRole) === 'technician') {
-                            $redirectPage = '/sps/pages/technician_dashboard.php';
-                        } elseif (strtolower($dbRole) === 'staff') {
-                            $redirectPage = '/sps/pages/staff_dashboard.php';
-                        } elseif (strtolower($dbRole) === 'admin') {
-                            $redirectPage = '/sps/pages/admin_dashboard.php';
-                        }
-
-                        header('Location: ' . $redirectPage);
+                        // always redirect to central dashboard; dashboard will show role-specific content
+                        header('Location: /sps/pages/dashboard.php');
                         exit;
                     }
                 }

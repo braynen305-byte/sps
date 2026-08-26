@@ -1,12 +1,26 @@
 <?php
 session_start();
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolower($_SESSION['role'] ?? '') !== 'admin') {
+// Only admin or office staff may create work orders
+if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || !in_array(strtolower($_SESSION['role'] ?? ''), ['admin', 'office'])) {
     header('Location: /sps/login.php');
     exit;
 }
 
 require_once '../includes/dbh.inc.php';
+
+// ensure priority column exists
+try {
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `priority` VARCHAR(20) DEFAULT 'Normal'");
+} catch (Exception $ex) {
+    // ignore
+}
+// ensure order_number column exists (optional manual number)
+try {
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `order_number` VARCHAR(100) DEFAULT NULL");
+} catch (Exception $ex) {
+    // ignore
+}
 
 $title = 'Create Work Order';
 require_once '../includes/header.php';
@@ -32,6 +46,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $chargeableTo = trim($_POST['chargeable_to'] ?? '');
     $orderReceivedBy = $_POST['order_received_by'] ?? $_SESSION['user_id'];
     $workPerformedBy = $_POST['work_performed_by'] ?? '';
+    $priority = $_POST['priority'] ?? 'Normal';
+    $orderNumberRaw = trim($_POST['order_number'] ?? '');
+    if ($orderNumberRaw !== '') {
+        $clean = preg_replace('/^WO/i', '', $orderNumberRaw);
+        $orderNumber = 'WO' . $clean;
+    } else {
+        $orderNumber = null;
+    }
     $permissionAnytime = isset($_POST['permission_anytime']) ? 1 : 0;
     $permissionDate = $_POST['permission_date'] ?? '';
     $permissionTime = $_POST['permission_time'] ?? '';
@@ -51,23 +73,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     additional_comments, work_description, vessel_vin, vessel_hours, labor_time, 
                     parts_cost, chargeable_to, order_received_by, work_performed_by,
                     permission_anytime, permission_date, permission_time,
-                    entry_date, time_entered, time_departed, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                    entry_date, time_entered, time_departed, priority, order_number, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ');
             
-            $result = $stmt->execute([
+                // If the current user is office staff, do not allow technician-only fields to be set
+                if (strtolower($_SESSION['role'] ?? '') === 'office') {
+                    $workPerformedBy = null;
+                    $workDescription = null;
+                    $vesselHours = null;
+                    $laborTime = null;
+                    $timeEntered = null;
+                    $timeDeparted = null;
+                }
+
+                $result = $stmt->execute([
                 $customerId ?: null, $clientName, $clientPhone, $location, $orderDate,
                 $expectedStartDate ?: null, $expectedEndDate ?: null, $requestedWork,
                 $additionalComments, $workDescription, $vesselVin, $vesselHours, $laborTime,
                 $partsCost ?: null, $chargeableTo, $orderReceivedBy, $workPerformedBy ?: null,
                 $permissionAnytime, $permissionDate ?: null, $permissionTime ?: null,
-                $entryDate ?: null, $timeEntered ?: null, $timeDeparted ?: null
+                $entryDate ?: null, $timeEntered ?: null, $timeDeparted ?: null, $priority ?: 'Normal', $orderNumber
             ]);
 
-            if ($result) {
+                if ($result) {
                 $message = 'Work order created successfully.';
                 $messageType = 'success';
-                header('Location: /sps/pages/workorder_dashboard.php');
+                header('Location: /sps/pages/dashboard.php');
                 exit;
             } else {
                 $message = 'Unable to create work order.';
@@ -82,6 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $staff = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
 $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
+$currentRole = strtolower($_SESSION['role'] ?? '');
 ?>
 
 <style>
@@ -198,7 +231,7 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
 </style>
 
 <h2>Create Work Order</h2>
-<p><a href="/sps/pages/workorder_dashboard.php">← Back to Dashboard</a></p>
+<p><a href="/sps/pages/dashboard.php">← Back to Dashboard</a></p>
 
 <?php if ($message !== ''): ?>
     <p style="color: <?php echo $messageType === 'success' ? 'green' : 'red'; ?>;">
@@ -211,7 +244,8 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
     <div class="form-section">
         <h3>CLIENT INFORMATION</h3>
         <div class="form-row">
-            <div class=Select Customer</label>
+            <div class="form-group">
+                <label>Select Customer</label>
                 <select name="customer_id">
                     <option value="">-- Select a Customer --</option>
                     <?php foreach ($customers as $cust): ?>
@@ -247,18 +281,43 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
         <div class="form-row">
             <div class="form-group">
                 <label>Order Received By</label>
-                <select name="order_received_by">
-                    <option value="">-- Select Staff --</option>
-                    <?php foreach ($staff as $s): ?>
-                        <option value="<?php echo (int)$s['id']; ?>" <?php echo (int)$s['id'] === (int)$_SESSION['user_id'] ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($s['firstname'] . ' ' . $s['lastname'], ENT_QUOTES, 'UTF-8'); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
+                <?php if ($currentRole === 'admin'): ?>
+                    <select name="order_received_by">
+                        <option value="">-- Select Staff --</option>
+                        <?php foreach ($staff as $s): ?>
+                            <option value="<?php echo (int)$s['id']; ?>" <?php echo (int)$s['id'] === (int)$_SESSION['user_id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($s['firstname'] . ' ' . $s['lastname'], ENT_QUOTES, 'UTF-8'); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                <?php else: ?>
+                    <?php
+                        // office staff: lock to current user
+                        $me = null;
+                        foreach ($staff as $s) {
+                            if ((int)$s['id'] === (int)$_SESSION['user_id']) { $me = $s; break; }
+                        }
+                    ?>
+                    <input type="hidden" name="order_received_by" value="<?php echo (int)$_SESSION['user_id']; ?>">
+                    <div><?php echo $me ? htmlspecialchars($me['firstname'] . ' ' . $me['lastname'], ENT_QUOTES, 'UTF-8') : 'You'; ?></div>
+                <?php endif; ?>
             </div>
             <div class="form-group">
                 <label>Order Date *</label>
                 <input type="date" name="order_date" required>
+            </div>
+            <div class="form-group">
+                <label>Priority</label>
+                <select name="priority">
+                    <?php $curPr = 'Normal'; $opts = ['Low','Normal','High']; foreach ($opts as $op): ?>
+                        <option value="<?php echo htmlspecialchars($op, ENT_QUOTES, 'UTF-8'); ?>" <?php echo ($curPr === $op) ? 'selected' : ''; ?>><?php echo htmlspecialchars($op, ENT_QUOTES, 'UTF-8'); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Work Order Number (optional)<br>
+                    <input type="text" name="order_number" placeholder="WO123 or 123">
+                </label>
             </div>
         </div>
         <div class="form-row">
@@ -332,6 +391,7 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
     </div>
 
     <!-- Work Performed -->
+    <?php if ($currentRole !== 'office'): ?>
     <div class="form-section">
         <h3>WORK PERFORMED</h3>
         <div class="form-row">
@@ -358,6 +418,7 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
     <!-- Costs and Hours -->
     <div class="form-section">
@@ -388,7 +449,7 @@ $customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetch
     <div class="form-section">
         <div class="form-buttons">
             <button type="submit">Create Work Order</button>
-            <a href="/sps/pages/workorder_dashboard.php" class="cancel-btn">Cancel</a>
+            <a href="/sps/pages/dashboard.php" class="cancel-btn">Cancel</a>
         </div>
     </div>
 </form>

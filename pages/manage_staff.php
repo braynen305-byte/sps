@@ -86,27 +86,103 @@ $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, ro
     </p>
 <?php endif; ?>
 
-<h3>Add Staff</h3>
-<form method="post">
-    <input type="hidden" name="action" value="create">
-    <input type="text" name="firstname" placeholder="First name" required>
-    <input type="text" name="middlename" placeholder="Middle name">
-    <input type="text" name="lastname" placeholder="Last name" required>
-    <input type="email" name="email" placeholder="Email" required>
-    <select name="role">
-        <option value="staff">Staff</option>
-        <option value="technician">Technician</option>
-        <option value="admin">Admin</option>
-    </select>
-    <input type="password" name="password" placeholder="Temporary password" required>
-    <button type="submit">Add Staff</button>
-</form>
+<div class="staff-panel">
+    <div class="panel-header"><h2 style="margin:0;">Staff Management</h2></div>
+    <div class="panel-inner">
+        <h3 class="section-heading"><span class="heading-title">Add Staff</span> <button id="toggle-add-staff" class="toggle-link" aria-expanded="false" style="margin-left:12px;padding:6px 0;background:transparent;border:0;color:#007BFF;cursor:pointer;">Show Add Staff ▾</button></h3>
+        <style>
+            .section-heading { text-align:center; margin:8px 0 6px; }
+            .section-heading .heading-title { display:inline-block; text-transform:uppercase; font-weight:700; border-bottom:3px solid #007BFF; padding-bottom:6px; }
+            .section-block { padding:12px; border-radius:8px; margin-bottom:18px; }
+            .section-block.add { background:#ffffff; }
+            .section-block.list { background:#fbfbff; }
+            .staff-panel { max-width:1100px; margin:18px auto; }
+            .staff-panel .panel-header { background:#007BFF; color:#fff; padding:12px 16px; border-radius:10px 10px 0 0; }
+            .staff-panel .panel-inner { background:#fff; padding:16px; border-radius:0 0 10px 10px; box-shadow:0 4px 12px rgba(0,0,0,0.04); }
+            .add-staff { max-width:920px; margin:10px auto 22px; }
+            .add-staff.collapsed { display:none; }
+    .add-staff .grid { display:grid; grid-template-columns: repeat(2, 1fr); gap:12px; }
+    .add-staff label { display:block; font-size:13px; margin-bottom:4px; }
+    .add-staff input[type="text"], .add-staff input[type="email"], .add-staff input[type="password"], .add-staff select { width:100%; padding:8px; box-sizing:border-box; border:1px solid #cfd8e3; border-radius:4px; }
+    .add-staff .full { grid-column:1/-1; }
+    .add-staff .actions { display:flex; justify-content:flex-end; }
+    .add-staff .actions button { padding:8px 14px; border-radius:4px; background:#007bff; color:#fff; border:none; cursor:pointer; }
+</style>
+<div class="section-block add">
+<div class="add-staff">
+    <form method="post" class="add-staff-form">
+        <input type="hidden" name="action" value="create">
+        <div class="grid">
+            <div>
+                <label>First name</label>
+                <input type="text" name="firstname" placeholder="First name" required>
+            </div>
+            <div>
+                <label>Middle name</label>
+                <input type="text" name="middlename" placeholder="Middle name">
+            </div>
+            <div>
+                <label>Last name</label>
+                <input type="text" name="lastname" placeholder="Last name" required>
+            </div>
+            <div>
+                <label>Email</label>
+                <input type="email" name="email" placeholder="Email" required>
+            </div>
+            <div>
+                <label>Role</label>
+                <select name="role">
+                    <option value="staff">Staff</option>
+                    <option value="technician">Technician</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <div>
+                <label>Temporary password</label>
+                <input type="password" name="password" placeholder="Temporary password" required>
+            </div>
+            <div class="full actions">
+                <button type="submit">Add Staff</button>
+            </div>
+        </div>
+    </form>
+    </div>
+</div>
+<script>
+(function(){
+    var btn = document.getElementById('toggle-add-staff');
+    var panel = document.querySelector('.add-staff');
+    if(!btn || !panel) return;
+    // start collapsed
+    panel.classList.add('collapsed');
+    btn.setAttribute('aria-expanded','false');
+    btn.addEventListener('click', function(){
+        var collapsed = panel.classList.toggle('collapsed');
+        btn.setAttribute('aria-expanded', String(!collapsed));
+        btn.textContent = collapsed ? 'Show Add Staff ▾' : 'Hide Add Staff ▴';
+    });
+})();
+</script>
 
-<h3>Current Staff</h3>
+    <h3 class="section-heading"><span class="heading-title">Current Staff</span></h3>
+<style>
+    .staff-table { width:100%; max-width:1100px; margin:12px auto; border-collapse:collapse; font-family: Arial, sans-serif; }
+    .staff-table th, .staff-table td { padding:12px 14px; border:1px solid #e9ecef; vertical-align:middle; }
+    .staff-table thead th { background:#f1f5f9; font-weight:700; }
+    .staff-table tbody tr:nth-child(odd) { background:#ffffff; }
+    .staff-table tbody tr:nth-child(even) { background:#fbfdff; }
+    .staff-table tbody tr:hover { background:#f0f8ff; }
+    .staff-table td.role-cell { min-width:300px; }
+    .staff-table select { width:100%; max-width:320px; padding:8px; box-sizing:border-box; }
+    .staff-table td.actions-cell { width:260px; text-align:center; }
+    .staff-table .btn { padding:6px 10px; border-radius:4px; background:#007bff; color:#fff; border:none; cursor:pointer; }
+    .staff-table form { margin:0; }
+</style>
 <?php if (empty($staffList)): ?>
     <p>No staff found.</p>
 <?php else: ?>
-    <table>
+    <div class="section-block list">
+    <table class="staff-table">
         <thead>
             <tr>
                 <th>Name</th>
@@ -120,8 +196,8 @@ $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, ro
                 <tr>
                     <td><?php echo htmlspecialchars(trim($staff['firstname'] . ' ' . $staff['middlename'] . ' ' . $staff['lastname']), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($staff['email'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td>
-                        <form method="post" style="display:inline;">
+                    <td class="role-cell">
+                        <form id="role-form-<?php echo (int)$staff['id']; ?>" method="post" style="display:inline-block;">
                             <input type="hidden" name="action" value="update_role">
                             <input type="hidden" name="user_id" value="<?php echo (int)$staff['id']; ?>">
                             <select name="role">
@@ -129,20 +205,25 @@ $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, ro
                                 <option value="technician" <?php echo strtolower($staff['role'] ?? '') === 'technician' ? 'selected' : ''; ?>>Technician</option>
                                 <option value="admin" <?php echo strtolower($staff['role'] ?? '') === 'admin' ? 'selected' : ''; ?>>Admin</option>
                             </select>
-                            <button type="submit">Update</button>
                         </form>
                     </td>
-                    <td>
-                        <form method="post" style="display:inline;">
-                            <input type="hidden" name="action" value="delete">
-                            <input type="hidden" name="user_id" value="<?php echo (int)$staff['id']; ?>">
-                            <button type="submit" onclick="return confirm('Delete this staff member?');">Delete</button>
-                        </form>
+                    <td class="actions-cell">
+                        <div style="display:flex;justify-content:center;gap:12px;align-items:center;">
+                            <button type="button" class="btn" onclick="document.getElementById('role-form-<?php echo (int)$staff['id']; ?>').submit();">Update</button>
+                            <form method="post" style="display:inline;" onsubmit="return confirm('Delete this staff member?');">
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="user_id" value="<?php echo (int)$staff['id']; ?>">
+                                <button type="submit">Delete</button>
+                            </form>
+                        </div>
                     </td>
                 </tr>
             <?php endforeach; ?>
         </tbody>
     </table>
-<?php endif; ?>
+    </div>
+    <?php endif; ?>
+    </div>
+</div>
 
 <?php require_once '../includes/footer.php'; ?>
