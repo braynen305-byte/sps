@@ -57,20 +57,20 @@ require_once '../includes/header.php';
 $searchClient = trim($_GET['search_client'] ?? '');
 $sortBy = $_GET['sort_by'] ?? 'recent';
 
-$query = 'SELECT * FROM workorders WHERE 1=1';
+$query = 'SELECT w.*, s.firstname AS assignee_firstname, s.lastname AS assignee_lastname FROM workorders w LEFT JOIN staff s ON s.id = w.work_performed_by WHERE 1=1';
 $params = [];
 
 if ($searchClient !== '') {
-    $query .= ' AND client_name LIKE ?';
+    $query .= ' AND w.client_name LIKE ?';
     $params[] = '%' . $searchClient . '%';
 }
 
 if ($sortBy === 'recent') {
-    $query .= ' ORDER BY created_at DESC';
+    $query .= ' ORDER BY w.created_at DESC';
 } elseif ($sortBy === 'client') {
-    $query .= ' ORDER BY client_name ASC';
+    $query .= ' ORDER BY w.client_name ASC';
 } elseif ($sortBy === 'date') {
-    $query .= ' ORDER BY order_date DESC';
+    $query .= ' ORDER BY w.order_date DESC';
 }
 
 $stmt = $conn->prepare($query);
@@ -244,6 +244,7 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <th>Order ID</th>
                 <th>Client Name</th>
                 <th>Location</th>
+                <th>Assigned To</th>
                 <th>Order Date</th>
                 <th>Status</th>
                 <th>Priority</th>
@@ -256,6 +257,12 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td><?php echo (int)$wo['id']; ?></td>
                     <td><?php echo htmlspecialchars($wo['client_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['location'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td>
+                        <?php
+                            $assignedName = trim((($wo['assignee_firstname'] ?? '') . ' ' . ($wo['assignee_lastname'] ?? '')));
+                            echo htmlspecialchars($assignedName !== '' ? $assignedName : 'Unassigned', ENT_QUOTES, 'UTF-8');
+                        ?>
+                    </td>
                     <td><?php echo htmlspecialchars($wo['order_date'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td>
                         <?php 

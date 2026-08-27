@@ -176,43 +176,83 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
     <?php if ($message): ?><p style="color:green"><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></p><?php endif; ?>
 
     <?php
-    // search support (role-restricted to assigned WOs)
+    // search support (role-restricted to assigned WOs unless scope is set to all)
+    $scope = strtolower($_GET['scope'] ?? 'assigned');
+    if (!in_array($scope, ['assigned', 'all'], true)) {
+        $scope = 'assigned';
+    }
+
     $q = trim($_GET['q'] ?? '');
     $searchResults = [];
     if ($q !== '') {
         $like = "%$q%";
-        $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? AND (client_name LIKE ? OR location LIKE ? OR id = ?) ORDER BY updated_at DESC LIMIT 200');
-        try {
-            $searchStmt->execute([$userId, $like, $like, (int)$q]);
-            $searchResults = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (PDOException $e) {
-            // handle missing `status` column by retrying without it
-            if ($e->getCode() === '42S22') {
-                $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, updated_at FROM workorders WHERE work_performed_by = ? AND (client_name LIKE ? OR location LIKE ? OR id = ?) ORDER BY updated_at DESC LIMIT 200');
-                $searchStmt->execute([$userId, $like, $like, (int)$q]);
-                $rows = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
-                foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
-                $searchResults = $rows;
-            } else {
-                throw $e;
+        if ($scope === 'assigned') {
+            $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? AND (client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ?) ORDER BY updated_at DESC LIMIT 200');
+            try {
+                $searchStmt->execute([$userId, $like, $like, $like]);
+                $searchResults = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
+            } catch (PDOException $e) {
+                if ($e->getCode() === '42S22') {
+                    $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders WHERE work_performed_by = ? AND (client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ?) ORDER BY updated_at DESC LIMIT 200');
+                    $searchStmt->execute([$userId, $like, $like, $like]);
+                    $rows = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
+                    $searchResults = $rows;
+                } else {
+                    throw $e;
+                }
+            }
+        } else {
+            $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ? ORDER BY updated_at DESC LIMIT 200');
+            try {
+                $searchStmt->execute([$like, $like, $like]);
+                $searchResults = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
+            } catch (PDOException $e) {
+                if ($e->getCode() === '42S22') {
+                    $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders WHERE client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ? ORDER BY updated_at DESC LIMIT 200');
+                    $searchStmt->execute([$like, $like, $like]);
+                    $rows = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
+                    $searchResults = $rows;
+                } else {
+                    throw $e;
+                }
             }
         }
     }
 
     // assigned workorders list
-    $stmt = $conn->prepare('SELECT id, client_name, location, order_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
-    try {
-        $stmt->execute([$userId]);
-        $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        if ($e->getCode() === '42S22') {
-            $stmt = $conn->prepare('SELECT id, client_name, location, order_date, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
+    if ($scope === 'assigned') {
+        $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
+        try {
             $stmt->execute([$userId]);
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
-            $workorders = $rows;
-        } else {
-            throw $e;
+            $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            if ($e->getCode() === '42S22') {
+                $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
+                $stmt->execute([$userId]);
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
+                $workorders = $rows;
+            } else {
+                throw $e;
+            }
+        }
+    } else {
+        $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders ORDER BY updated_at DESC');
+        try {
+            $stmt->execute();
+            $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            if ($e->getCode() === '42S22') {
+                $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders ORDER BY updated_at DESC');
+                $stmt->execute();
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
+                $workorders = $rows;
+            } else {
+                throw $e;
+            }
         }
     }
 
@@ -221,19 +261,110 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
     $wpStmt = $conn->prepare('SELECT woe.*, s.full_name AS editor_name FROM workorder_edits woe LEFT JOIN staff s ON s.id = woe.edited_by WHERE woe.workorder_id = ? AND woe.field_name IN ("work_description","time_entered","time_departed","vessel_hours","labor_time","parts_cost") ORDER BY woe.edited_at DESC');
     ?>
 
-    <div style="max-width:1100px;margin:12px auto;display:flex;gap:12px;align-items:center;">
-        <a class="btn" href="#assigned-list">View Assigned Work Orders</a>
-        <a class="btn btn-secondary" href="/sps/pages/manage_workorders.php">All Work Orders</a>
-        <form method="get" style="margin-left:auto;" onsubmit="return !!document.getElementById('search-q').value;">
+    <div style="width:100%;max-width:1100px;margin:12px 0 0;display:flex;justify-content:space-between;align-items:center;gap:12px;padding-left:0;padding-right:10px;box-sizing:border-box; margin-left:10%;margin-right:auto;">
+        <form class="filter-form" method="get" style="margin-left:0;">
+            <label for="view-filter" style="font-size:12px;font-weight:700;">View</label>
+            <select id="view-filter" name="scope" class="filter-select" onchange="this.form.submit();">
+                <option value="assigned" <?php echo $scope === 'assigned' ? 'selected' : ''; ?>>Assigned Work Orders</option>
+                <option value="all" <?php echo $scope === 'all' ? 'selected' : ''; ?>>All Work Orders</option>
+            </select>
+        </form>
+
+        <form class="search-form" method="get" onsubmit="return !!document.getElementById('search-q').value;" style="margin-right:0;">
             <input id="search-q" type="search" name="q" placeholder="Search by ID, client or location" value="<?php echo htmlspecialchars($q, ENT_QUOTES, 'UTF-8'); ?>">
-            <button class="btn" type="submit">Search</button>
-            <?php if ($q !== ''): ?><a href="/sps/pages/dashboard.php" class="btn btn-secondary">Clear</a><?php endif; ?>
+            <button class="btn search-btn" type="submit">Search</button>
+            <?php if ($q !== ''): ?><a href="/sps/pages/dashboard.php?scope=<?php echo urlencode($scope); ?>" class="btn btn-secondary search-clear">Clear</a><?php endif; ?>
         </form>
     </div>
 
     <style>
-        .tech-wo-table { width:100%; max-width:1100px; margin:12px auto 80px; border-collapse:collapse; font-family: Arial, sans-serif; }
-        .tech-wo-table th, .tech-wo-table td { padding:10px; border:1px solid #e6e6e6; text-align:left; }
+        .filter-form, .search-form {
+            display:flex;
+            align-items:center;
+            gap:6px;
+            margin:0;
+            line-height:1;
+        }
+        .filter-form { margin-right:auto; margin-left:0; }
+        .search-form { margin-left:auto; margin-right:0; }
+        .search-form input, .filter-select {
+            height:30px;
+            padding:5px 8px;
+            font-size:13px;
+            box-sizing:border-box;
+            margin:0;
+            display:block;
+        }
+        .filter-select { min-width:160px; }
+        .search-form input { min-width:310px; width:310px; }
+        .search-btn,
+        .search-clear {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            padding:0 10px;
+            font-size:11px;
+            min-width:58px;
+            height:30px;
+            line-height:1;
+            margin:0;
+            vertical-align:middle;
+            box-sizing:border-box;
+        }
+        .tech-wo-table { width:100%; max-width:80vw; min-width:980px; margin:12px auto 80px; border-collapse:collapse; font-family: Arial, sans-serif; table-layout: fixed; }
+        .tech-wo-table th, .tech-wo-table td { padding:12px 10px; border:1px solid #e6e6e6; text-align:center; vertical-align:middle; }
+        .tech-wo-table thead th { text-align: center; }
+        .tech-wo-table th:nth-child(1), .tech-wo-table td:nth-child(1) { width:50px; }
+        .tech-wo-table th:nth-child(2), .tech-wo-table td:nth-child(2),
+        .tech-wo-table th:nth-child(3), .tech-wo-table td:nth-child(3),
+        .tech-wo-table th:nth-child(4), .tech-wo-table td:nth-child(4) {
+            width: 15%;
+            min-width: 150px;
+        }
+        .tech-wo-table th:nth-child(5), .tech-wo-table td:nth-child(5) {
+            width: 9%;
+            min-width: 90px;
+        }
+        .tech-wo-table th:nth-child(6), .tech-wo-table td:nth-child(6) {
+            width: 13%;
+            min-width: 120px;
+        }
+        .tech-wo-table th:nth-child(7), .tech-wo-table td:nth-child(7) {
+            width: 11%;
+            min-width: 110px;
+        }
+        .tech-wo-table th:nth-child(8), .tech-wo-table td:nth-child(8) {
+            width: 6%;
+            min-width: 60px;
+        }
+        .tech-wo-table th:nth-child(9), .tech-wo-table td:nth-child(9) {
+            width: 6%;
+            min-width: 60px;
+        }
+        .tech-wo-table th:nth-child(10), .tech-wo-table td:nth-child(10) {
+            width: 12%;
+            min-width: 120px;
+        }
+        .tech-wo-table th:nth-child(11), .tech-wo-table td:nth-child(11) {
+            width: 220px;
+            max-width: 220px;
+        }
+        .tech-wo-table td:last-child {
+            white-space: nowrap;
+            overflow: visible;
+            padding: 8px 6px;
+            vertical-align: middle;
+            text-align: left;
+        }
+        .tech-wo-table td:last-child a,
+        .tech-wo-table td:last-child .btn {
+            display: inline-block;
+            margin: 0 4px 0 0;
+            white-space: nowrap;
+            vertical-align: middle;
+            line-height: 1.15;
+            font-size: 12px;
+        }
         .quick-update { display:none; margin-top:8px; background:#f9f9fb; padding:10px; border-radius:6px; }
         .btn { padding:6px 10px; border-radius:4px; background:#007BFF; color:#fff; text-decoration:none; }
         .btn-secondary { background:#6c757d; }
@@ -250,7 +381,19 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             <h3 style="max-width:1100px;margin:12px auto 0;">Search results for "<?php echo htmlspecialchars($q, ENT_QUOTES, 'UTF-8'); ?>"</h3>
             <table class="tech-wo-table" style="max-width:1100px;margin:12px auto 20px;">
                 <thead>
-                            <tr><th>#</th><th>Client</th><th>Location</th><th>Assigned By</th><th>Order Date</th><th>Priority</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
+                    <tr>
+                        <th>#</th>
+                        <th>Client</th>
+                        <th>Location</th>
+                        <th>Assigned By</th>
+                        <th>Order Date</th>
+                        <th>Date Created</th>
+                        <th>Expected End Date</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                    </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($searchResults as $sres): ?>
@@ -270,6 +413,8 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                             ?>
                             <td><?php echo htmlspecialchars($assignedBy ?: '(none)', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars($sres['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars($sres['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td class="priority-cell <?php echo (isset($sres['priority']) && strtolower(trim((string)$sres['priority'])) === 'high') ? 'priority-high' : ''; ?>"><?php echo htmlspecialchars($sres['priority'] ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['status'] ?? 'Open', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['updated_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -285,7 +430,19 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
 
         <table class="tech-wo-table" id="assigned-list">
             <thead>
-                <tr><th>#</th><th>Client</th><th>Location</th><th>Assigned By</th><th>Order Date</th><th>Priority</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
+                <tr>
+                    <th>#</th>
+                    <th>Client</th>
+                    <th>Location</th>
+                    <th>Assigned By</th>
+                    <th>Order Date</th>
+                    <th>Date Created</th>
+                    <th>Expected End Date</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                </tr>
             </thead>
             <tbody>
             <?php foreach ($workorders as $wo): ?>
@@ -315,6 +472,8 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                         ?>
                         <td><?php echo htmlspecialchars($assignedBy ?: '(none)', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo htmlspecialchars($wo['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo htmlspecialchars($wo['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td class="priority-cell <?php echo (strtolower(trim((string)$rawPriority)) === 'high') ? 'priority-high' : ''; ?>"><?php echo htmlspecialchars($rawPriority ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['status'] ?? 'Open', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['updated_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -324,7 +483,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                         <a class="btn" href="#" onclick="toggleQuick(<?php echo (int)$wo['id']; ?>);return false;">Quick Update</a>
                     </td>
                 </tr>
-                <tr id="quick-row-<?php echo (int)$wo['id']; ?>" style="display:none;"><td colspan="9">
+                <tr id="quick-row-<?php echo (int)$wo['id']; ?>" style="display:none;"><td colspan="11">
                     <div class="quick-update" id="quick-<?php echo (int)$wo['id']; ?>">
                         <form method="post" onsubmit="return confirm('Apply quick update?');">
                             <input type="hidden" name="action" value="quick_update">

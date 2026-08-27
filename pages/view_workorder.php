@@ -1,6 +1,30 @@
 <?php
 session_start();
 
+function formatHistoryEventText($fieldName, $oldValue, $newValue) {
+    $field = trim((string)($fieldName ?? ''));
+    $oldText = trim((string)($oldValue ?? ''));
+    $newText = trim((string)($newValue ?? ''));
+
+    if ($field === 'work_description') {
+        return $newText === '' ? 'Cleared' : $newText;
+    }
+
+    if ($field === '') {
+        return $newText === '' ? 'Event cleared' : $newText;
+    }
+
+    if ($newText === '') {
+        return $field . ': Cleared';
+    }
+
+    if ($oldText === '') {
+        return $field . ': Added: ' . $newText;
+    }
+
+    return $field . ': ' . $newText;
+}
+
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     header('Location: /sps/login.php');
     exit;
@@ -22,9 +46,46 @@ if (!$wo) {
     exit;
 }
 
+$currentRole = strtolower($_SESSION['role'] ?? '');
+$userId = (int)($_SESSION['user_id'] ?? 0);
+$techActionMessage = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $currentRole === 'technician') {
+    $assignedToMe = (int)($wo['work_performed_by'] ?? 0) === $userId;
+    if ($assignedToMe && isset($_POST['tech_action'])) {
+        $techAction = $_POST['tech_action'];
+        $targetTech = isset($_POST['new_tech']) ? (int)$_POST['new_tech'] : 0;
+
+        if ($techAction === 'opt_out') {
+            $oldValue = $wo['work_performed_by'];
+            $upd = $conn->prepare('UPDATE workorders SET work_performed_by = NULL WHERE id = ?');
+            $upd->execute([$id]);
+            $ins = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
+            $ins->execute([$id, 'work_performed_by', (string)$oldValue, null, $userId]);
+            $techActionMessage = 'You have opted out of this work order.';
+            $wo['work_performed_by'] = null;
+            $stmt = $conn->prepare('SELECT w.*, r.firstname AS received_first, r.lastname AS received_last, p.firstname AS performed_first, p.lastname AS performed_last FROM workorders w LEFT JOIN staff r ON w.order_received_by = r.id LEFT JOIN staff p ON w.work_performed_by = p.id WHERE w.id = ?');
+            $stmt->execute([$id]);
+            $wo = $stmt->fetch(PDO::FETCH_ASSOC);
+        } elseif ($techAction === 'transfer' && $targetTech > 0 && $targetTech !== $userId) {
+            $oldValue = $wo['work_performed_by'];
+            $upd = $conn->prepare('UPDATE workorders SET work_performed_by = ? WHERE id = ?');
+            $upd->execute([$targetTech, $id]);
+            $ins = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
+            $ins->execute([$id, 'work_performed_by', (string)$oldValue, (string)$targetTech, $userId]);
+            $techActionMessage = 'This work order has been transferred to the selected technician.';
+            $wo['work_performed_by'] = $targetTech;
+            $stmt = $conn->prepare('SELECT w.*, r.firstname AS received_first, r.lastname AS received_last, p.firstname AS performed_first, p.lastname AS performed_last FROM workorders w LEFT JOIN staff r ON w.order_received_by = r.id LEFT JOIN staff p ON w.work_performed_by = p.id WHERE w.id = ?');
+            $stmt->execute([$id]);
+            $wo = $stmt->fetch(PDO::FETCH_ASSOC);
+        }
+    }
+}
+
+$techs = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
+
 $title = 'View Work Order';
 require_once '../includes/header.php';
-$currentRole = strtolower($_SESSION['role'] ?? '');
 ?>
 
 <style>
@@ -48,6 +109,33 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
 <?php if (in_array($currentRole, ['admin','office','technician'])): ?>
     | <a class="edit-link" href="/sps/pages/edit_workorder.php?id=<?php echo (int)$wo['id']; ?>">Edit</a>
 <?php endif; ?></p>
+
+<?php if ($techActionMessage !== ''): ?>
+    <p style="color:#0b5a2c; font-weight:600; margin:10px 0;"><?php echo htmlspecialchars($techActionMessage, ENT_QUOTES, 'UTF-8'); ?></p>
+<?php endif; ?>
+
+<?php if ($currentRole === 'technician' && (int)($wo['work_performed_by'] ?? 0) === $userId): ?>
+    <div style="margin: 12px 0 18px; padding: 12px; border: 1px solid #dfe7f1; border-radius: 6px; background: #f8fbff;">
+        <form method="post" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0;">
+            <input type="hidden" name="tech_action" value="transfer">
+            <label for="new_tech" style="font-weight:700; margin:0;">Transfer to:</label>
+            <select id="new_tech" name="new_tech" style="min-width:220px; padding:8px; border:1px solid #cbd5e0; border-radius:4px;">
+                <option value="">Select technician</option>
+                <?php foreach ($techs as $tech): ?>
+                    <?php if ((int)$tech['id'] !== $userId): ?>
+                        <option value="<?php echo (int)$tech['id']; ?>"><?php echo htmlspecialchars($tech['firstname'] . ' ' . $tech['lastname'], ENT_QUOTES, 'UTF-8'); ?></option>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </select>
+            <button type="submit" class="edit-link" style="border:none; cursor:pointer;">Transfer Technician</button>
+        </form>
+
+        <form method="post" style="margin-top:10px;">
+            <input type="hidden" name="tech_action" value="opt_out">
+            <button type="submit" class="view-link" style="border:none; cursor:pointer; background:#6c757d;">Opt Out of This Work Order</button>
+        </form>
+    </div>
+<?php endif; ?>
 
 <?php
 // determine last updated by: latest edit or creator
@@ -74,6 +162,7 @@ try {
 ?>
 <table class="wo-table" style="width:100%;">
     <tbody>
+    <tr><th class="wo-meta">Assigned To</th><td><?php echo htmlspecialchars((($wo['performed_first'] ?? '') ? ($wo['performed_first'].' '.($wo['performed_last'] ?? '')) : 'Unassigned'), ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Client Name</th><td><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Client Phone</th><td><?php echo htmlspecialchars($wo['client_phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Location</th><td><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
@@ -113,7 +202,7 @@ if ($currentRole !== 'technician') {
     $creatorName = ($wo['received_first'] ?? '') ? ($wo['received_first'] . ' ' . ($wo['received_last'] ?? '')) : '';
     $createdAt = $wo['created_at'] ?? '';
     $creatorDisplay = $creatorName ?: (!empty($wo['order_received_by']) ? ('User ' . $wo['order_received_by']) : 'System');
-    $edStmt = $conn->prepare('SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? ORDER BY e.edited_at ASC');
+    $edStmt = $conn->prepare('SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? ORDER BY e.edited_at DESC');
     $edStmt->execute([$id]);
     $edits = $edStmt->fetchAll(PDO::FETCH_ASSOC);
     if ($createdAt || $creatorName || $edits): ?>
@@ -139,11 +228,8 @@ if ($currentRole !== 'technician') {
                     <td style="padding:6px;"><?php echo htmlspecialchars($e['edited_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td style="padding:6px;"><?php echo htmlspecialchars((($e['firstname'] ?? '') ? ($e['firstname'].' '.($e['lastname'] ?? '')) : ('User '.($e['edited_by'] ?? ''))), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td style="padding:6px;">
-                        <?php echo htmlspecialchars(($e['field_name'] ?? '') . ': ', ENT_QUOTES, 'UTF-8'); ?>
                         <?php $oldVal = $e['old_value'] ?? ''; $newVal = $e['new_value'] ?? ''; ?>
-                        <strong><?php echo htmlspecialchars($oldVal === '' ? '(empty)' : $oldVal, ENT_QUOTES, 'UTF-8'); ?></strong>
-                        &rarr;
-                        <strong><?php echo htmlspecialchars($newVal === '' ? '(empty)' : $newVal, ENT_QUOTES, 'UTF-8'); ?></strong>
+                        <?php echo htmlspecialchars(formatHistoryEventText($e['field_name'] ?? '', $oldVal, $newVal), ENT_QUOTES, 'UTF-8'); ?>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -177,11 +263,11 @@ if ($currentRole !== 'technician') {
 
 // Assignment and work-performed history
 try {
-    $assignStmt = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at ASC");
+    $assignStmt = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC");
     $assignStmt->execute([$id]);
     $assigns = $assignStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $wpStmt = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? AND e.field_name IN ('work_description','time_entered','time_departed','vessel_hours','labor_time','parts_cost') ORDER BY e.edited_at ASC");
+    $wpStmt = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? AND e.field_name IN ('work_description','time_entered','time_departed','vessel_hours','labor_time','parts_cost') ORDER BY e.edited_at DESC");
     $wpStmt->execute([$id]);
     $workPerformedEdits = $wpStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -204,14 +290,13 @@ try {
         }
         foreach ($workPerformedEdits as $e) {
             $who = (($e['firstname'] ?? '') ? ($e['firstname'].' '.($e['lastname'] ?? '')) : ('User '.($e['edited_by'] ?? '')));
-            $oldVal = $e['old_value'] === '' ? '(empty)' : $e['old_value'];
-            $newVal = $e['new_value'] === '' ? '(empty)' : $e['new_value'];
-            $techHistory[] = ['edited_at'=>$e['edited_at'] ?? '', 'who'=>$who, 'event'=>($e['field_name'] ?? '') . ': ' . $oldVal . ' → ' . $newVal];
+            $oldVal = $e['old_value'] ?? '';
+            $newVal = $e['new_value'] ?? '';
+            $techHistory[] = ['edited_at'=>$e['edited_at'] ?? '', 'who'=>$who, 'event'=>formatHistoryEventText($e['field_name'] ?? '', $oldVal, $newVal)];
         }
 
-        // sort by edited_at ascending
         usort($techHistory, function($a,$b){
-            return strcmp($a['edited_at'] ?? '', $b['edited_at'] ?? '');
+            return strcmp(($b['edited_at'] ?? ''), ($a['edited_at'] ?? ''));
         });
 
         echo "<h3>Technician History</h3>";
@@ -273,10 +358,7 @@ try {
                     <td style="padding:6px;"><?php echo htmlspecialchars($e['edited_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td style="padding:6px;"><?php echo htmlspecialchars((($e['firstname'] ?? '') ? ($e['firstname'].' '.($e['lastname'] ?? '')) : ('User '.($e['edited_by'] ?? ''))), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td style="padding:6px;">
-                        <?php echo htmlspecialchars(($e['field_name'] ?? '') . ': ', ENT_QUOTES, 'UTF-8'); ?>
-                        <strong><?php echo htmlspecialchars($e['old_value'] === '' ? '(empty)' : $e['old_value'], ENT_QUOTES, 'UTF-8'); ?></strong>
-                        &rarr;
-                        <strong><?php echo htmlspecialchars($e['new_value'] === '' ? '(empty)' : $e['new_value'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                        <?php echo htmlspecialchars(formatHistoryEventText($e['field_name'] ?? '', $e['old_value'] ?? '', $e['new_value'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>
                     </td>
                 </tr>
             <?php endforeach; ?>

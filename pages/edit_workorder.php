@@ -98,11 +98,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     ];
 
     if (!$hasStatus) {
-        // remove 'status' from allFields when the column is not present to avoid SQL errors
         $allFields = array_values(array_filter($allFields, function($f){ return $f !== 'status'; }));
     }
     if (!$hasPriority) {
-        // remove 'priority' when column missing
         $allFields = array_values(array_filter($allFields, function($f){ return $f !== 'priority'; }));
     }
     if (!$hasOrderNumber) {
@@ -113,9 +111,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $allowed = $allFields;
     } elseif ($currentRole === 'office') {
         $allowed = ['client_name','client_phone','location','order_date','expected_start_date','expected_end_date',
-            'requested_work','additional_comments','parts_cost','chargeable_to','permission_anytime','permission_date','permission_time','priority','order_number'];
+            'requested_work','additional_comments','parts_cost','chargeable_to','permission_anytime','permission_date','permission_time'];
+        if ($hasPriority) { $allowed[] = 'priority'; }
+        if ($hasOrderNumber) { $allowed[] = 'order_number'; }
     } elseif ($currentRole === 'technician') {
-        $allowed = ['vessel_vin','vessel_hours','labor_time','work_performed_by','work_description','entry_date','time_entered','time_departed','status'];
+        $allowed = ['vessel_vin','vessel_hours','labor_time','work_performed_by','work_description','entry_date','time_entered','time_departed'];
+        if ($hasStatus) { $allowed[] = 'status'; }
     } else {
         $message = 'You do not have permission to edit this work order.';
         $allowed = [];
@@ -204,7 +205,7 @@ require_once '../includes/header.php';
 
     <fieldset style="padding:10px; margin-bottom:15px;">
         <legend>Client / Order</legend>
-        <?php if ($currentRole === 'admin' || $currentRole === 'technician'): ?>
+        <?php if (($currentRole === 'admin' || $currentRole === 'technician') && $hasStatus): ?>
         <label>Status<br>
             <select name="status">
                 <?php $curStatus = $wo['status'] ?? 'Open'; $statuses = ['Open','In Progress','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
@@ -213,7 +214,7 @@ require_once '../includes/header.php';
             </select>
         </label>
         <?php endif; ?>
-        <?php if ($currentRole === 'admin' || $currentRole === 'office'): ?>
+        <?php if (($currentRole === 'admin' || $currentRole === 'office') && $hasPriority): ?>
         <label>Priority<br>
             <?php $curPriority = $wo['priority'] ?? 'Normal'; $priorities = ['Low','Normal','High']; ?>
             <select name="priority">
@@ -222,6 +223,8 @@ require_once '../includes/header.php';
                 <?php endforeach; ?>
             </select>
         </label>
+        <?php endif; ?>
+        <?php if (($currentRole === 'admin' || $currentRole === 'office') && $hasOrderNumber): ?>
         <label>Work Order Number (optional)<br>
             <input type="text" name="order_number" value="<?php echo htmlspecialchars($wo['order_number'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" placeholder="WO123 or 123">
         </label>

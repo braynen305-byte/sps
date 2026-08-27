@@ -3,6 +3,17 @@ require_once 'includes/dbh.inc.php';
 
 echo "<h2>Setting up database...</h2>";
 
+$sqlStaff = "CREATE TABLE IF NOT EXISTS `staff` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `firstname` VARCHAR(30) NOT NULL,
+    `middlename` VARCHAR(30) DEFAULT NULL,
+    `lastname` VARCHAR(30) NOT NULL,
+    `email` VARCHAR(255) NOT NULL UNIQUE,
+    `role` ENUM('admin','office','staff','technician') NOT NULL DEFAULT 'staff',
+    `password` VARCHAR(255) DEFAULT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4";
+
 $sqlCustomers = "CREATE TABLE IF NOT EXISTS `customers` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `name` VARCHAR(100) NOT NULL,
@@ -44,6 +55,13 @@ $sqlWorkorders = "CREATE TABLE IF NOT EXISTS `workorders` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4";
+
+try {
+    $conn->exec($sqlStaff);
+    echo "✓ Staff table created/verified<br>";
+} catch (PDOException $e) {
+    echo "✗ Staff error: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "<br>";
+}
 
 try {
     $conn->exec($sqlCustomers);

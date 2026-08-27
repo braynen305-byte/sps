@@ -8,6 +8,20 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolo
 
 require_once '../includes/dbh.inc.php';
 
+$allowedRoles = ['admin', 'office', 'staff', 'technician'];
+
+try {
+    $roleCol = $conn->query("SHOW COLUMNS FROM staff LIKE 'role'")->fetch(PDO::FETCH_ASSOC);
+    if (!$roleCol) {
+        $conn->exec("ALTER TABLE staff ADD COLUMN role ENUM('admin','office','staff','technician') NOT NULL DEFAULT 'staff' AFTER email");
+    } else {
+        $conn->exec("ALTER TABLE staff MODIFY COLUMN role ENUM('admin','office','staff','technician') NOT NULL DEFAULT 'staff'");
+    }
+} catch (PDOException $e) {
+    $message = 'Database schema check failed: ' . $e->getMessage();
+    $messageType = 'error';
+}
+
 $title = 'Manage Staff';
 require_once '../includes/header.php';
 
@@ -22,7 +36,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $middlename = trim($_POST['middlename'] ?? '');
         $lastname = trim($_POST['lastname'] ?? '');
         $email = strtolower(trim($_POST['email'] ?? ''));
-        $role = trim($_POST['role'] ?? 'staff');
+        $role = strtolower(trim((string)($_POST['role'] ?? 'staff')));
+        if (!in_array($role, $allowedRoles, true)) {
+            $role = 'staff';
+        }
         $password = trim($_POST['password'] ?? '');
 
         if ($firstname === '' || $lastname === '' || $email === '' || $password === '') {
@@ -48,7 +65,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'update_role') {
         $userId = (int)($_POST['user_id'] ?? 0);
-        $role = trim($_POST['role'] ?? 'staff');
+        $role = strtolower(trim((string)($_POST['role'] ?? 'staff')));
+        if (!in_array($role, $allowedRoles, true)) {
+            $role = 'staff';
+        }
         if ($userId > 0) {
             $stmt = $conn->prepare('UPDATE staff SET role = ? WHERE id = ?');
             if ($stmt->execute([$role, $userId])) {
@@ -74,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, role FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
+$staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, COALESCE(role, "staff") AS role FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <h2>Manage Staff</h2>
@@ -133,6 +153,7 @@ $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, ro
                 <label>Role</label>
                 <select name="role">
                     <option value="staff">Staff</option>
+                    <option value="office">Office</option>
                     <option value="technician">Technician</option>
                     <option value="admin">Admin</option>
                 </select>
@@ -202,6 +223,7 @@ $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, ro
                             <input type="hidden" name="user_id" value="<?php echo (int)$staff['id']; ?>">
                             <select name="role">
                                 <option value="staff" <?php echo strtolower($staff['role'] ?? '') === 'staff' ? 'selected' : ''; ?>>Staff</option>
+                                <option value="office" <?php echo strtolower($staff['role'] ?? '') === 'office' ? 'selected' : ''; ?>>Office</option>
                                 <option value="technician" <?php echo strtolower($staff['role'] ?? '') === 'technician' ? 'selected' : ''; ?>>Technician</option>
                                 <option value="admin" <?php echo strtolower($staff['role'] ?? '') === 'admin' ? 'selected' : ''; ?>>Admin</option>
                             </select>

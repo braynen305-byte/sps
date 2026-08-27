@@ -99,7 +99,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
         // ignore
 }
 
-$stmt = $conn->prepare('SELECT id, client_name, location, order_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
+$stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
 $stmt->execute([$userId]);
 $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -125,7 +125,18 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <?php else: ?>
     <table class="tech-wo-table">
         <thead>
-            <tr><th>#</th><th>Client</th><th>Location</th><th>Order Date</th><th>Status</th><th>Priority</th><th>Updated</th><th>Actions</th></tr>
+            <tr>
+                <th>#</th>
+                <th>Client</th>
+                <th>Location</th>
+                <th>Order Date</th>
+                <th>Date Created</th>
+                <th>Expected End Date</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Updated</th>
+                <th>Actions</th>
+            </tr>
         </thead>
         <tbody>
         <?php foreach ($workorders as $wo): ?>
@@ -145,6 +156,8 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <td><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                 <td><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                 <td><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                <td><?php echo htmlspecialchars($wo['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                <td><?php echo htmlspecialchars($wo['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                 <td><?php echo htmlspecialchars($wo['status'] ?? 'Open', ENT_QUOTES, 'UTF-8'); ?></td>
                 <td class="priority-cell"><?php echo htmlspecialchars($rawPriority, ENT_QUOTES, 'UTF-8'); ?></td>
                 <td><?php echo htmlspecialchars($wo['updated_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -154,7 +167,7 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <a class="btn" href="#" onclick="toggleQuick(<?php echo (int)$wo['id']; ?>);return false;">Quick Update</a>
                 </td>
             </tr>
-            <tr id="quick-row-<?php echo (int)$wo['id']; ?>" style="display:none;"><td colspan="7">
+            <tr id="quick-row-<?php echo (int)$wo['id']; ?>" style="display:none;"><td colspan="10">
                 <div class="quick-update" id="quick-<?php echo (int)$wo['id']; ?>">
                     <form method="post" onsubmit="return confirm('Apply quick update?');">
                         <input type="hidden" name="action" value="quick_update">
