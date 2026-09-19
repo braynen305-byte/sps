@@ -42,6 +42,12 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
 
  $currentRole = strtolower($_SESSION['role'] ?? '');
 
+// customer portal accounts use the dedicated customer dashboard
+if ($currentRole === 'customer') {
+    header('Location: /sps/pages/customer_dashboard.php');
+    exit;
+}
+
 // If user is an admin, send them to the dedicated admin dashboard
 if ($currentRole === 'admin') {
     header('Location: /sps/pages/admin_dashboard.php');
@@ -67,51 +73,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'quick
         $s = $conn->prepare('SELECT * FROM workorders WHERE id = ?');
         $s->execute([$woId]);
         $target = $s->fetch(PDO::FETCH_ASSOC);
-        if ($target && $currentRole === 'technician' && (int)($target['work_performed_by'] ?? 0) === $userId) {
-            $allowed = ['status','work_description','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
-            if (!$hasStatus) {
-                // remove status from allowed updates when column is missing
-                $allowed = array_values(array_filter($allowed, function($f){ return $f !== 'status'; }));
+        if ($target) {
+            $canQuickUpdate = false;
+            if ($currentRole === 'technician') {
+                $canQuickUpdate = (int)($target['work_performed_by'] ?? 0) === $userId;
+            } elseif (in_array($currentRole, ['office', 'staff', 'admin'], true)) {
+                $canQuickUpdate = true;
             }
-            $changes = [];
-            $updateParts = [];
-            $params = [];
-            foreach ($allowed as $f) {
-                $new = $_POST[$f] ?? null;
-                if ($new === '') $new = null;
-                $old = $target[$f] ?? null;
-                if ((string)$old !== (string)$new) {
-                    $changes[] = ['field'=>$f, 'old'=>$old, 'new'=>$new];
-                    $updateParts[] = "$f = ?";
-                    $params[] = $new;
+            if ($canQuickUpdate) {
+                $allowed = ['status','work_description','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
+                if (!$hasStatus) {
+                    // remove status from allowed updates when column is missing
+                    $allowed = array_values(array_filter($allowed, function($f){ return $f !== 'status'; }));
                 }
-            }
-            if (!empty($updateParts)) {
-                $params[] = $woId;
-                $upd = $conn->prepare('UPDATE workorders SET ' . implode(', ', $updateParts) . ' WHERE id = ?');
-                $upd->execute($params);
-
-                $conn->exec("CREATE TABLE IF NOT EXISTS workorder_edits (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    workorder_id INT NOT NULL,
-                    field_name VARCHAR(255) NOT NULL,
-                    old_value LONGTEXT,
-                    new_value LONGTEXT,
-                    edited_by INT,
-                    edited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX(workorder_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-                $ins = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
-                foreach ($changes as $c) {
-                    $ins->execute([$woId, $c['field'], $c['old'], $c['new'], $userId]);
+                $changes = [];
+                $updateParts = [];
+                $params = [];
+                foreach ($allowed as $f) {
+                    $new = $_POST[$f] ?? null;
+                    if ($new === '') $new = null;
+                    $old = $target[$f] ?? null;
+                    if ((string)$old !== (string)$new) {
+                        $changes[] = ['field'=>$f, 'old'=>$old, 'new'=>$new];
+                        $updateParts[] = "$f = ?";
+                        $params[] = $new;
+                    }
                 }
-                $message = 'Work order updated.';
+                if (!empty($updateParts)) {
+                    $params[] = $woId;
+                    $upd = $conn->prepare('UPDATE workorders SET ' . implode(', ', $updateParts) . ' WHERE id = ?');
+                    $upd->execute($params);
+
+                    $conn->exec("CREATE TABLE IF NOT EXISTS workorder_edits (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        workorder_id INT NOT NULL,
+                        field_name VARCHAR(255) NOT NULL,
+                        old_value LONGTEXT,
+                        new_value LONGTEXT,
+                        edited_by INT,
+                        edited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX(workorder_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+                    $ins = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
+                    foreach ($changes as $c) {
+                        $ins->execute([$woId, $c['field'], $c['old'], $c['new'], $userId]);
+                    }
+                    $message = 'Work order updated.';
+                } else {
+                    $message = 'No changes detected.';
+                }
             } else {
-                $message = 'No changes detected.';
+                $message = 'Work order not found or you are not allowed to update it.';
             }
         } else {
-            $message = 'Work order not found or you are not assigned to it.';
+            $message = 'Work order not found.';
         }
     }
 }
@@ -314,7 +330,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
         .tech-wo-table { width:100%; max-width:80vw; min-width:980px; margin:12px auto 80px; border-collapse:collapse; font-family: Arial, sans-serif; table-layout: fixed; }
         .tech-wo-table th, .tech-wo-table td { padding:12px 10px; border:1px solid #e6e6e6; text-align:center; vertical-align:middle; }
         .tech-wo-table thead th { text-align: center; }
-        .tech-wo-table th:nth-child(1), .tech-wo-table td:nth-child(1) { width:50px; }
+        .tech-wo-table th:nth-child(1), .tech-wo-table td:nth-child(1) { width:68px; min-width:68px; max-width:68px; }
         .tech-wo-table th:nth-child(2), .tech-wo-table td:nth-child(2),
         .tech-wo-table th:nth-child(3), .tech-wo-table td:nth-child(3),
         .tech-wo-table th:nth-child(4), .tech-wo-table td:nth-child(4) {
@@ -382,10 +398,11 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             <table class="tech-wo-table" style="max-width:1100px;margin:12px auto 20px;">
                 <thead>
                     <tr>
-                        <th>#</th>
+                        <th>Work Order #</th>
                         <th>Client</th>
                         <th>Location</th>
-                        <th>Assigned By</th>
+                        <th>Created By</th>
+                        <th>Assigned To</th>
                         <th>Order Date</th>
                         <th>Date Created</th>
                         <th>Expected End Date</th>
@@ -399,19 +416,70 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                 <?php foreach ($searchResults as $sres): ?>
                     <?php $rowClass = (isset($sres['priority']) && strtolower(trim((string)$sres['priority'])) === 'high') ? 'priority-row' : ''; ?>
                     <tr class="<?php echo $rowClass; ?>">
-                        <td><?php echo (int)$sres['id']; ?></td>
+                        <td><?php echo htmlspecialchars(!empty($sres['order_number']) ? $sres['order_number'] : 'WO' . str_pad((string)(int)$sres['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                            <?php
-                                $assignedBy = '';
+                        <?php
+                            $creatorName = '';
+                            if (!empty($sres['order_received_by'])) {
+                                $creatorStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+                                $creatorStmt->execute([(int)$sres['order_received_by']]);
+                                $creatorRow = $creatorStmt->fetch(PDO::FETCH_ASSOC);
+                                if ($creatorRow) {
+                                    $creatorName = trim(($creatorRow['firstname'] ?? '') . ' ' . ($creatorRow['lastname'] ?? ''));
+                                }
+                            }
+                            if ($creatorName === '') {
+                                $creatorHistoryStmt = $conn->prepare('SELECT e.new_value, e.edited_by, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = ? ORDER BY e.edited_at DESC LIMIT 1');
+                                $creatorHistoryStmt->execute([(int)$sres['id'], 'order_received_by']);
+                                $creatorHistoryRow = $creatorHistoryStmt->fetch(PDO::FETCH_ASSOC);
+                                if ($creatorHistoryRow) {
+                                    $creatorHistoryValue = trim((string)($creatorHistoryRow['new_value'] ?? ''));
+                                    if ($creatorHistoryValue !== '' && is_numeric($creatorHistoryValue)) {
+                                        $creatorStaffStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+                                        $creatorStaffStmt->execute([(int)$creatorHistoryValue]);
+                                        $creatorStaffRow = $creatorStaffStmt->fetch(PDO::FETCH_ASSOC);
+                                        if ($creatorStaffRow) {
+                                            $creatorName = trim(($creatorStaffRow['firstname'] ?? '') . ' ' . ($creatorStaffRow['lastname'] ?? ''));
+                                        }
+                                    }
+                                    if ($creatorName === '' && (!empty($creatorHistoryRow['firstname']) || !empty($creatorHistoryRow['lastname']))) {
+                                        $creatorName = trim(($creatorHistoryRow['firstname'] ?? '') . ' ' . ($creatorHistoryRow['lastname'] ?? ''));
+                                    }
+                                }
+                            }
+                            $assignedName = '';
+                            if (!empty($sres['work_performed_by'])) {
+                                $assignedStmt = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+                                $assignedStmt->execute([(int)$sres['work_performed_by']]);
+                                $assignedRow = $assignedStmt->fetch(PDO::FETCH_ASSOC);
+                                $assignedRole = strtolower(trim((string)($assignedRow['role'] ?? '')));
+                                if ($assignedRow && ($assignedRole === 'admin' || in_array($assignedRole, ['technician', 'staff', ''], true))) {
+                                    $assignedName = trim(($assignedRow['firstname'] ?? '') . ' ' . ($assignedRow['lastname'] ?? ''));
+                                }
+                            }
+                            if ($assignedName === '') {
                                 try {
-                                    $ax = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC LIMIT 1");
+                                    $ax = $conn->prepare("SELECT e.new_value, e.edited_at FROM workorder_edits e WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC LIMIT 1");
                                     $ax->execute([(int)$sres['id']]);
                                     $ar = $ax->fetch(PDO::FETCH_ASSOC);
-                                    if ($ar) $assignedBy = trim(($ar['firstname'] ?? '') . ' ' . ($ar['lastname'] ?? '')) ?: ('User '.($ar['edited_by'] ?? ''));
-                                } catch (Exception $ex) { $assignedBy = ''; }
-                            ?>
-                            <td><?php echo htmlspecialchars($assignedBy ?: '(none)', ENT_QUOTES, 'UTF-8'); ?></td>
+                                    if ($ar) {
+                                        $assigneeId = trim((string)($ar['new_value'] ?? ''));
+                                        if ($assigneeId !== '' && is_numeric($assigneeId)) {
+                                            $techLookup = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+                                            $techLookup->execute([(int)$assigneeId]);
+                                            $techRow = $techLookup->fetch(PDO::FETCH_ASSOC);
+                                            $techLookupRole = strtolower(trim((string)($techRow['role'] ?? '')));
+                                            if ($techRow && ($techLookupRole === 'admin' || in_array($techLookupRole, ['technician', 'staff', ''], true))) {
+                                                $assignedName = trim(($techRow['firstname'] ?? '') . ' ' . ($techRow['lastname'] ?? ''));
+                                            }
+                                        }
+                                    }
+                                } catch (Exception $ex) { }
+                            }
+                        ?>
+                        <td><?php echo htmlspecialchars($creatorName ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars($assignedName ?: 'Not Assigned', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -431,10 +499,11 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
         <table class="tech-wo-table" id="assigned-list">
             <thead>
                 <tr>
-                    <th>#</th>
+                    <th>Work Order #</th>
                     <th>Client</th>
                     <th>Location</th>
-                    <th>Assigned By</th>
+                    <th>Created By</th>
+                    <th>Assigned To</th>
                     <th>Order Date</th>
                     <th>Date Created</th>
                     <th>Expected End Date</th>
@@ -458,19 +527,70 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                     $rowClass = (strtolower(trim((string)$rawPriority)) === 'high') ? 'priority-row' : '';
                 ?>
                 <tr class="<?php echo $rowClass; ?>">
-                    <td><?php echo (int)$wo['id']; ?></td>
+                    <td><?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <?php
-                            $assignedBy = '';
-                            try {
-                                $ax = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC LIMIT 1");
-                                $ax->execute([(int)$wo['id']]);
-                                $ar = $ax->fetch(PDO::FETCH_ASSOC);
-                                if ($ar) $assignedBy = trim(($ar['firstname'] ?? '') . ' ' . ($ar['lastname'] ?? '')) ?: ('User '.($ar['edited_by'] ?? ''));
-                            } catch (Exception $ex) { $assignedBy = ''; }
+                            $createdBy = '';
+                            if (!empty($wo['order_received_by'])) {
+                                $createStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+                                $createStmt->execute([(int)$wo['order_received_by']]);
+                                $createRow = $createStmt->fetch(PDO::FETCH_ASSOC);
+                                if ($createRow) {
+                                    $createdBy = trim(($createRow['firstname'] ?? '') . ' ' . ($createRow['lastname'] ?? ''));
+                                }
+                            }
+                            if ($createdBy === '') {
+                                $createHistoryStmt = $conn->prepare('SELECT e.new_value, e.edited_by, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = ? ORDER BY e.edited_at DESC LIMIT 1');
+                                $createHistoryStmt->execute([(int)$wo['id'], 'order_received_by']);
+                                $createHistoryRow = $createHistoryStmt->fetch(PDO::FETCH_ASSOC);
+                                if ($createHistoryRow) {
+                                    $createHistoryValue = trim((string)($createHistoryRow['new_value'] ?? ''));
+                                    if ($createHistoryValue !== '' && is_numeric($createHistoryValue)) {
+                                        $creatorStaffStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+                                        $creatorStaffStmt->execute([(int)$createHistoryValue]);
+                                        $creatorStaffRow = $creatorStaffStmt->fetch(PDO::FETCH_ASSOC);
+                                        if ($creatorStaffRow) {
+                                            $createdBy = trim(($creatorStaffRow['firstname'] ?? '') . ' ' . ($creatorStaffRow['lastname'] ?? ''));
+                                        }
+                                    }
+                                    if ($createdBy === '' && (!empty($createHistoryRow['firstname']) || !empty($createHistoryRow['lastname']))) {
+                                        $createdBy = trim(($createHistoryRow['firstname'] ?? '') . ' ' . ($createHistoryRow['lastname'] ?? ''));
+                                    }
+                                }
+                            }
+                            $assignedTo = '';
+                            if (!empty($wo['work_performed_by'])) {
+                                $assignStmt = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+                                $assignStmt->execute([(int)$wo['work_performed_by']]);
+                                $assignRow = $assignStmt->fetch(PDO::FETCH_ASSOC);
+                                $assignRole = strtolower(trim((string)($assignRow['role'] ?? '')));
+                                if ($assignRow && ($assignRole === 'admin' || in_array($assignRole, ['technician', 'staff', ''], true))) {
+                                    $assignedTo = trim(($assignRow['firstname'] ?? '') . ' ' . ($assignRow['lastname'] ?? ''));
+                                }
+                            }
+                            if ($assignedTo === '') {
+                                try {
+                                    $ax = $conn->prepare("SELECT e.new_value FROM workorder_edits e WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC LIMIT 1");
+                                    $ax->execute([(int)$wo['id']]);
+                                    $ar = $ax->fetch(PDO::FETCH_ASSOC);
+                                    if ($ar) {
+                                        $assigneeId = trim((string)($ar['new_value'] ?? ''));
+                                        if ($assigneeId !== '' && is_numeric($assigneeId)) {
+                                            $techLookup = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+                                            $techLookup->execute([(int)$assigneeId]);
+                                            $techRow = $techLookup->fetch(PDO::FETCH_ASSOC);
+                                            $techLookupRole = strtolower(trim((string)($techRow['role'] ?? '')));
+                                            if ($techRow && ($techLookupRole === 'admin' || in_array($techLookupRole, ['technician', 'staff', ''], true))) {
+                                                $assignedTo = trim(($techRow['firstname'] ?? '') . ' ' . ($techRow['lastname'] ?? ''));
+                                            }
+                                        }
+                                    }
+                                } catch (Exception $ex) { }
+                            }
                         ?>
-                        <td><?php echo htmlspecialchars($assignedBy ?: '(none)', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars($createdBy ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars($assignedTo ?: 'Not Assigned', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -490,7 +610,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                             <input type="hidden" name="workorder_id" value="<?php echo (int)$wo['id']; ?>">
                             <?php if ($hasStatus): ?>
                             <label>Status: <select name="status">
-                                <?php $statuses = ['Open','In Progress','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
+                                <?php $statuses = ['Pending','Open','In Progress','Waiting for Parts','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
                                     <option value="<?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($wo['status'] ?? '') === $st) ? 'selected' : ''; ?>><?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?></option>
                                 <?php endforeach; ?>
                             </select></label><br>
@@ -530,12 +650,306 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
     }
     </script>
 
+<?php elseif ($currentRole === 'office'): ?>
+
+    <h2>Office Dashboard</h2>
+    <p>Welcome, <?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Office Staff', ENT_QUOTES, 'UTF-8'); ?>.</p>
+
+    <style>
+        .office-dashboard {
+            max-width: 1200px;
+            margin: 20px auto 0;
+        }
+        .office-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+        .office-card {
+            background: #fff;
+            border-left: 4px solid #007BFF;
+            border-radius: 8px;
+            padding: 18px 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            text-align: center;
+        }
+        .office-card.primary { border-left-color: #28a745; }
+        .office-card.info { border-left-color: #17a2b8; }
+        .office-card.warning { border-left-color: #ffc107; }
+        .office-card a {
+            color: #333;
+            text-decoration: none;
+            font-weight: 700;
+            display: block;
+        }
+        .office-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin: 18px 0 20px;
+        }
+        .stat-box {
+            background: rgb(234, 234, 234);
+            border: 1px solid #d9d9d9;
+            border-radius: 8px;
+            padding: 14px 12px;
+            text-align: center;
+        }
+        .stat-box strong {
+            display: block;
+            font-size: 24px;
+            color: #007BFF;
+            margin-top: 8px;
+        }
+        .office-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .office-table th, .office-table td {
+            border: 1px solid #e6e6e6;
+            padding: 10px 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+        .office-table thead th {
+            background: #007BFF;
+            color: white;
+        }
+        .badge {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #eaf3ff;
+            color: #0056b3;
+        }
+        .badge.high { background: #ffe5e5; color: #b10000; }
+        .badge.open { background: #eafaf1; color: #207a3d; }
+    </style>
+
+    <?php
+    $officeStats = ['total' => 0, 'open' => 0, 'high' => 0, 'today' => 0];
+    $officeHasStatus = false;
+    $officeHasPriority = false;
+    $officeHasUpdatedAt = false;
+    try {
+        $officeHasStatus = (bool) $conn->query("SHOW COLUMNS FROM workorders LIKE 'status'")->fetch(PDO::FETCH_ASSOC);
+        $officeHasPriority = (bool) $conn->query("SHOW COLUMNS FROM workorders LIKE 'priority'")->fetch(PDO::FETCH_ASSOC);
+        $officeHasUpdatedAt = (bool) $conn->query("SHOW COLUMNS FROM workorders LIKE 'updated_at'")->fetch(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $officeHasStatus = false;
+        $officeHasPriority = false;
+        $officeHasUpdatedAt = false;
+    }
+
+    try {
+        $officeStats['total'] = (int) $conn->query('SELECT COUNT(*) FROM workorders')->fetchColumn();
+        if ($officeHasStatus) {
+            $officeStats['open'] = (int) $conn->query("SELECT COUNT(*) FROM workorders WHERE status NOT IN ('Completed', 'Closed')")->fetchColumn();
+        } else {
+            $officeStats['open'] = $officeStats['total'];
+        }
+        if ($officeHasPriority) {
+            $officeStats['high'] = (int) $conn->query("SELECT COUNT(*) FROM workorders WHERE LOWER(COALESCE(priority, '')) = 'high'")->fetchColumn();
+        }
+        $officeStats['today'] = (int) $conn->query("SELECT COUNT(*) FROM workorders WHERE DATE(order_date) = CURDATE() OR DATE(created_at) = CURDATE()")->fetchColumn();
+    } catch (Exception $e) {
+        $officeStats['total'] = (int) $conn->query('SELECT COUNT(*) FROM workorders')->fetchColumn();
+        $officeStats['open'] = $officeStats['total'];
+    }
+
+    $recentOfficeWOs = [];
+    try {
+        $recentSql = 'SELECT id, client_name, location, order_date, created_at';
+        if ($officeHasStatus) $recentSql .= ', status';
+        if ($officeHasPriority) $recentSql .= ', priority';
+        if ($officeHasUpdatedAt) $recentSql .= ', updated_at';
+        $recentSql .= ' FROM workorders ORDER BY ' . ($officeHasUpdatedAt ? 'updated_at' : 'created_at') . ' DESC LIMIT 5';
+        $recentStmt = $conn->query($recentSql);
+        $recentOfficeWOs = $recentStmt ? $recentStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    } catch (Exception $e) {
+        $recentOfficeWOs = [];
+        try {
+            $recentOfficeWOs = $conn->query('SELECT id, client_name, location, order_date, created_at FROM workorders ORDER BY created_at DESC LIMIT 5')->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $ignored) {
+            $recentOfficeWOs = [];
+        }
+    }
+
+    $pendingCustomerRequests = [];
+    try {
+        $pendingCustomerRequests = $conn->query(
+            "SELECT r.*, c.name AS customer_name FROM customer_service_requests r LEFT JOIN customers c ON c.id = r.customer_id WHERE LOWER(COALESCE(r.status, 'pending')) NOT IN ('accepted', 'rejected', 'closed') ORDER BY r.created_at DESC LIMIT 6"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $pendingCustomerRequests = [];
+    }
+    ?>
+
+    <div class="office-dashboard">
+        <div class="office-grid">
+            <div class="office-card primary"><a href="/sps/pages/create_workorder.php">Create Work Order</a></div>
+            <div class="office-card"><a href="/sps/pages/dashboard.php?scope=all">View Work Orders</a></div>
+            <div class="office-card info"><a href="#" onclick="promptOpenById(event);">Open Work Order (by ID)</a></div>
+            <div class="office-card"><a href="/sps/pages/profile.php">My Profile</a></div>
+            <div class="office-card warning"><a href="/sps/pages/dashboard.php?scope=all">Review Queue</a></div>
+        </div>
+
+        <div class="office-stats">
+            <div class="stat-box">
+                Total Work Orders
+                <strong><?php echo (int)$officeStats['total']; ?></strong>
+            </div>
+            <div class="stat-box">
+                Open Queue
+                <strong><?php echo (int)$officeStats['open']; ?></strong>
+            </div>
+            <div class="stat-box">
+                High Priority
+                <strong><?php echo (int)$officeStats['high']; ?></strong>
+            </div>
+            <div class="stat-box">
+                Due Today
+                <strong><?php echo (int)$officeStats['today']; ?></strong>
+            </div>
+        </div>
+
+        <div class="dashboard-container" style="width:100%; margin:0 0 20px;">
+            <h3>Office Activity</h3>
+            <p>Use this dashboard to create new jobs, review the current queue, and keep work orders moving efficiently for customers and technicians.</p>
+            <ul>
+                <li>Open and edit active work orders from the queue.</li>
+                <li>Track customer requests, order dates, and expected end dates.</li>
+                <li>Review high-priority jobs and keep technician scheduling accurate.</li>
+            </ul>
+        </div>
+
+        <div class="dashboard-container" style="width:100%; margin:0 0 20px;">
+            <h3>Pending Customer Requests</h3>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+                <strong style="font-size:14px; color:#1f2937;"><?php echo count($pendingCustomerRequests); ?> waiting for review</strong>
+                <a href="/sps/pages/manage_service_requests.php" style="color:#007BFF; text-decoration:none; font-weight:700;">Review all requests</a>
+            </div>
+
+            <?php if (empty($pendingCustomerRequests)): ?>
+                <p style="margin:0; color:#4b5563;">No new customer requests are waiting.</p>
+            <?php else: ?>
+                <table class="office-table" style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th>Request #</th>
+                            <th>Customer</th>
+                            <th>Issue</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($pendingCustomerRequests as $pending): ?>
+                            <?php
+                                $requestLabel = trim((string)($pending['request_number'] ?? ''));
+                                if ($requestLabel === '') {
+                                    $requestLabel = 'SR-' . str_pad((string)(int)$pending['id'], 5, '0', STR_PAD_LEFT);
+                                }
+                            ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($requestLabel, ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars($pending['customer_name'] ?? 'Customer', ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars(trim((string)($pending['problem_summary'] ?? $pending['description'] ?? 'Service request')), ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><span class="badge open"><?php echo htmlspecialchars($pending['status'] ?? 'Pending', ENT_QUOTES, 'UTF-8'); ?></span></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+
+        <h3>Recent Work Orders</h3>
+        <?php if (empty($recentOfficeWOs)): ?>
+            <p>No work orders have been created yet.</p>
+        <?php else: ?>
+            <table class="office-table">
+                <thead>
+                    <tr>
+                        <th>Work Order #</th>
+                        <th>Client</th>
+                        <th>Location</th>
+                        <th>Assigned To</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Order Date</th>
+                        <th>Updated</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($recentOfficeWOs as $row): ?>
+                        <?php
+                            $status = isset($row['status']) && $row['status'] !== '' ? $row['status'] : 'Open';
+                            $priority = isset($row['priority']) && $row['priority'] !== '' ? $row['priority'] : 'Normal';
+                            $priorityClass = strtolower(trim((string)$priority)) === 'high' ? 'high' : 'open';
+                            $displayOrderNumber = !empty($row['order_number']) ? $row['order_number'] : 'WO' . str_pad((string)(int)($row['id'] ?? 0), 4, '0', STR_PAD_LEFT);
+                            $assignedToName = 'Not Assigned';
+                            if (!empty($row['work_performed_by'])) {
+                                $assignedTechStmt = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+                                $assignedTechStmt->execute([(int)$row['work_performed_by']]);
+                                $assignedTechRow = $assignedTechStmt->fetch(PDO::FETCH_ASSOC);
+                                $assignedTechRole = strtolower(trim((string)($assignedTechRow['role'] ?? '')));
+                                if ($assignedTechRow && ($assignedTechRole === 'admin' || in_array($assignedTechRole, ['technician', 'staff', ''], true))) {
+                                    $assignedToName = trim(($assignedTechRow['firstname'] ?? '') . ' ' . ($assignedTechRow['lastname'] ?? ''));
+                                }
+                            }
+                        ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($displayOrderNumber, ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($assignedToName, ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><span class="badge <?php echo strtolower(trim((string)$status)) === 'completed' || strtolower(trim((string)$status)) === 'closed' ? '' : 'open'; ?>"><?php echo htmlspecialchars($status, ENT_QUOTES, 'UTF-8'); ?></span></td>
+                            <td><span class="badge <?php echo $priorityClass; ?>"><?php echo htmlspecialchars($priority, ENT_QUOTES, 'UTF-8'); ?></span></td>
+                            <td><?php echo htmlspecialchars($row['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['updated_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><a class="btn" href="/sps/pages/view_workorder.php?id=<?php echo (int)$row['id']; ?>">View</a></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </div>
+
 <?php else: ?>
 
     <h2>Welcome to your dashboard</h2>
     <p>You are logged in successfully.</p>
 
 <?php endif; ?>
+
+<script>
+function promptOpenById(e){
+    e = e || window.event;
+    if(e && e.preventDefault) e.preventDefault();
+    var id = prompt('Enter Work Order ID to open:');
+    if(!id) return false;
+    id = parseInt(id,10);
+    if(!id || id <= 0){ alert('Invalid ID'); return false; }
+    window.location.href = '/sps/pages/view_workorder.php?id=' + id;
+    return false;
+}
+function toggleQuick(id){
+    var row = document.getElementById('quick-row-'+id);
+    if(!row) return;
+    if(row.style.display === 'none' || row.style.display === ''){
+        row.style.display = 'table-row';
+    } else {
+        row.style.display = 'none';
+    }
+}
+</script>
 
 <?php
 require_once '../includes/footer.php';

@@ -7,6 +7,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
 }
 
 require_once '../includes/dbh.inc.php';
+require_once '../includes/notifications.php';
 
  $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if (!$id) {
@@ -23,8 +24,20 @@ if (!$wo) {
     exit;
 }
 
-$currentRole = strtolower($_SESSION['role'] ?? '');
+$currentRole = strtolower(trim((string)($_SESSION['role'] ?? '')));
 $userId = (int)($_SESSION['user_id'] ?? 0);
+
+if ($currentRole === '' && $userId > 0) {
+    $roleStmt = $conn->prepare('SELECT role FROM staff WHERE id = ? LIMIT 1');
+    $roleStmt->execute([$userId]);
+    $roleRow = $roleStmt->fetch(PDO::FETCH_ASSOC);
+    if ($roleRow) {
+        $currentRole = strtolower(trim((string)($roleRow['role'] ?? '')));
+        $_SESSION['role'] = $currentRole;
+    }
+}
+
+$canManageStatus = in_array($currentRole, ['admin', 'office', 'technician', 'staff'], true);
 
 // create edits table if missing
 $conn->exec("CREATE TABLE IF NOT EXISTS workorder_edits (
@@ -35,6 +48,17 @@ $conn->exec("CREATE TABLE IF NOT EXISTS workorder_edits (
     new_value LONGTEXT,
     edited_by INT,
     edited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX(workorder_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+$conn->exec("CREATE TABLE IF NOT EXISTS work_performed_entries (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    workorder_id INT NOT NULL,
+    performed_date DATE NOT NULL,
+    performed_time TIME NOT NULL,
+    description LONGTEXT NOT NULL,
+    added_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX(workorder_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
@@ -66,6 +90,15 @@ try {
 } catch (Exception $e) {
     $hasStatus = false;
 }
+if (!$hasStatus) {
+    try {
+        $conn->exec("ALTER TABLE workorders ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'Open'");
+        $hasStatus = true;
+    } catch (Exception $e) {
+        $hasStatus = false;
+    }
+}
+$canEditStatus = in_array($currentRole, ['admin', 'office', 'technician'], true);
 
 // detect priority column
 $hasPriority = false;
@@ -85,9 +118,52 @@ try {
     $hasOrderNumber = false;
 }
 
+function normalizeWorkOrderNumber($value) {
+    $raw = trim((string)($value ?? ''));
+    if ($raw === '') {
+        return null;
+    }
+
+    $withoutPrefix = preg_replace('/^WO/i', '', $raw);
+    $digitsOnly = preg_replace('/\D+/', '', $withoutPrefix ?? '');
+    if ($digitsOnly === '') {
+        return null;
+    }
+
+    $numeric = (int)$digitsOnly;
+    return 'WO' . str_pad((string)$numeric, 4, '0', STR_PAD_LEFT);
+}
+
 $message = '';
+$techEntryMessage = '';
+$isAssignedTechnician = ($currentRole === 'technician' && (int)($wo['work_performed_by'] ?? 0) === $userId);
+$techAssignmentWarning = ($currentRole === 'technician' && !$isAssignedTechnician) ? 'This work order must be assigned to you to edit.' : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if ($currentRole === 'technician' && isset($_POST['tech_action']) && $_POST['tech_action'] === 'add_work_performed') {
+        if (!$isAssignedTechnician) {
+            $techEntryMessage = 'You can only add work performed on work orders assigned to you.';
+        } else {
+            $performedDate = trim((string)($_POST['performed_date'] ?? ''));
+            $performedTime = trim((string)($_POST['performed_time'] ?? ''));
+            $performedDescription = trim((string)($_POST['performed_description'] ?? ''));
+
+            if ($performedDate !== '' && $performedTime !== '' && $performedDescription !== '') {
+                $insertEntry = $conn->prepare('INSERT INTO work_performed_entries (workorder_id, performed_date, performed_time, description, added_by) VALUES (?, ?, ?, ?, ?)');
+                $insertEntry->execute([$id, $performedDate, $performedTime, $performedDescription, $userId]);
+                $techEntryMessage = 'Work performed entry added successfully.';
+                header('Location: /sps/pages/edit_workorder.php?id=' . $id . '&entry_saved=1');
+                exit;
+            }
+
+            $techEntryMessage = 'Please enter a date, time, and description for the work performed entry.';
+        }
+    }
+
+    if ($currentRole === 'technician' && !$isAssignedTechnician && empty($_POST['tech_action'])) {
+        $message = $techAssignmentWarning !== '' ? $techAssignmentWarning : 'You can only edit work orders assigned to you.';
+    }
+
     // define allowed fields per role
     $allFields = [
         'status','priority',
@@ -109,14 +185,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($currentRole === 'admin') {
         $allowed = $allFields;
-    } elseif ($currentRole === 'office') {
-        $allowed = ['client_name','client_phone','location','order_date','expected_start_date','expected_end_date',
-            'requested_work','additional_comments','parts_cost','chargeable_to','permission_anytime','permission_date','permission_time'];
+    } elseif (in_array($currentRole, ['office', 'staff'], true)) {
+        $allowed = ['status','client_name','client_phone','location','order_date','expected_start_date','expected_end_date',
+            'requested_work','additional_comments','parts_cost','chargeable_to','permission_anytime','permission_date','permission_time',
+            'work_performed_by'];
         if ($hasPriority) { $allowed[] = 'priority'; }
         if ($hasOrderNumber) { $allowed[] = 'order_number'; }
     } elseif ($currentRole === 'technician') {
-        $allowed = ['vessel_vin','vessel_hours','labor_time','work_performed_by','work_description','entry_date','time_entered','time_departed'];
-        if ($hasStatus) { $allowed[] = 'status'; }
+        if (!$isAssignedTechnician) {
+            $allowed = [];
+            $message = $techAssignmentWarning !== '' ? $techAssignmentWarning : 'You can only edit work orders assigned to you.';
+        } else {
+            $allowed = ['vessel_vin','vessel_hours','labor_time','work_performed_by'];
+            if ($hasStatus) { $allowed[] = 'status'; }
+        }
     } else {
         $message = 'You do not have permission to edit this work order.';
         $allowed = [];
@@ -126,19 +208,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $updateParts = [];
     $params = [];
 
+    $oldAssignedTech = (int)($wo['work_performed_by'] ?? 0);
+    $newAssignedTech = isset($_POST['work_performed_by']) ? (int)($_POST['work_performed_by'] ?? 0) : $oldAssignedTech;
+
     foreach ($allowed as $field) {
         $new = $_POST[$field] ?? null;
         if ($field === 'permission_anytime') {
             $new = isset($_POST['permission_anytime']) ? 1 : 0;
         }
         if ($field === 'order_number') {
-            $raw = trim($new ?? '');
-            if ($raw !== '') {
-                $rawClean = preg_replace('/^WO/i','',$raw);
-                $new = 'WO' . $rawClean;
-            } else {
-                $new = null;
-            }
+            $raw = trim((string)($new ?? ''));
+            $new = normalizeWorkOrderNumber($raw);
         }
         // normalize empty strings to null for DB consistency
         $newNorm = ($new === '' ? null : $new);
@@ -156,6 +236,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $sql = 'UPDATE workorders SET ' . implode(', ', $updateParts) . ' WHERE id = ?';
         $upd = $conn->prepare($sql);
         $upd->execute($params);
+
+        $customerIdForNotice = (int)($wo['customer_id'] ?? 0);
+        $statusNotice = trim((string)($_POST['status'] ?? ($wo['status'] ?? 'Updated')));
+        if ($customerIdForNotice > 0 && $statusNotice !== '') {
+            notify_customer_workorder_update($conn, $customerIdForNotice, $id, $statusNotice);
+        }
 
         // insert edits
         $ins = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
@@ -176,7 +262,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // fetch staff for selects
-$staff = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
+$staff = $conn->query('SELECT id, firstname, lastname, role FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
+
+$techWorkEntries = [];
+if ($currentRole === 'technician') {
+    $techWorkEntriesStmt = $conn->prepare('SELECT wpe.*, s.firstname, s.lastname FROM work_performed_entries wpe LEFT JOIN staff s ON s.id = wpe.added_by WHERE wpe.workorder_id = ? ORDER BY wpe.performed_date DESC, wpe.performed_time DESC');
+    $techWorkEntriesStmt->execute([$id]);
+    $techWorkEntries = $techWorkEntriesStmt->fetchAll(PDO::FETCH_ASSOC);
+}
 
 $title = 'Edit Work Order';
 require_once '../includes/header.php';
@@ -185,7 +278,14 @@ require_once '../includes/header.php';
 <h2>Edit Work Order #<?php echo (int)$wo['id']; ?></h2>
 <p><a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>">← Back to Work Order</a></p>
 
-<?php if ($message): ?><p style="color: red"><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></p><?php endif; ?>
+<?php if ($message): ?><p style="color: #b45309; font-weight: 700; background: #fff7ed; border: 1px solid #fdba74; padding: 10px 12px; border-radius: 6px; max-width: 920px; margin: 12px auto 0;"><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></p><?php endif; ?>
+<?php $isTechBlocked = ($currentRole === 'technician' && !$isAssignedTechnician); ?>
+<?php if ($isTechBlocked): ?>
+    <div style="max-width: 920px; margin: 20px auto 0; padding: 14px 16px; border: 1px solid #fbbf24; border-radius: 8px; background: #fff7ed; color: #92400e; font-weight: 700;">
+        <?php echo htmlspecialchars($techAssignmentWarning, ENT_QUOTES, 'UTF-8'); ?>
+    </div>
+    <p style="max-width: 920px; margin: 16px auto 0;"><a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>">← Back to Work Order</a></p>
+<?php else: ?>
 <style>
     form.edit-form { max-width: 920px; margin: 18px auto 60px; font-family: Arial, sans-serif; padding-bottom: 120px; box-sizing: border-box; }
     form.edit-form fieldset { padding: 14px; margin-bottom: 14px; border-radius: 6px; border: 1px solid #d0d7de; }
@@ -205,10 +305,10 @@ require_once '../includes/header.php';
 
     <fieldset style="padding:10px; margin-bottom:15px;">
         <legend>Client / Order</legend>
-        <?php if (($currentRole === 'admin' || $currentRole === 'technician') && $hasStatus): ?>
+        <?php if ($canEditStatus): ?>
         <label>Status<br>
             <select name="status">
-                <?php $curStatus = $wo['status'] ?? 'Open'; $statuses = ['Open','In Progress','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
+                <?php $curStatus = $wo['status'] ?? 'Open'; $statuses = ['Pending','Open','In Progress','Waiting for Parts','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
                     <option value="<?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?>" <?php echo ($curStatus === $st) ? 'selected' : ''; ?>><?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?></option>
                 <?php endforeach; ?>
             </select>
@@ -241,24 +341,74 @@ require_once '../includes/header.php';
         <label>Additional Comments<br><textarea name="additional_comments"><?php echo htmlspecialchars($wo['additional_comments'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea></label>
     </fieldset>
 
-    <?php if ($currentRole === 'admin' || $currentRole === 'technician'): ?>
+    <?php if ($currentRole === 'admin' || $currentRole === 'office' || $currentRole === 'technician'): ?>
     <fieldset style="padding:10px; margin-bottom:15px;">
-        <legend>Work Performed / Technician</legend>
-        <label>Work Performed By<br>
+        <legend>Assignment / Technician</legend>
+        <label>Assigned Technician<br>
             <select name="work_performed_by">
-                <option value="">-- Select --</option>
+                <option value="">-- Not Assigned --</option>
                 <?php foreach ($staff as $s): ?>
-                    <option value="<?php echo (int)$s['id']; ?>" <?php echo ((int)$s['id'] === (int)($wo['work_performed_by'] ?? 0)) ? 'selected' : ''; ?>><?php echo htmlspecialchars($s['firstname'].' '.$s['lastname'], ENT_QUOTES, 'UTF-8'); ?></option>
+                    <?php
+                        $roleValue = strtolower(trim((string)($s['role'] ?? '')));
+                        $showInTechList = ($roleValue === 'admin' || $roleValue === 'technician' || $roleValue === 'staff' || $roleValue === '');
+                        if ($showInTechList):
+                    ?>
+                        <option value="<?php echo (int)$s['id']; ?>" <?php echo ((int)$s['id'] === (int)($wo['work_performed_by'] ?? 0)) ? 'selected' : ''; ?>><?php echo htmlspecialchars($s['firstname'].' '.$s['lastname'], ENT_QUOTES, 'UTF-8'); ?></option>
+                    <?php endif; ?>
                 <?php endforeach; ?>
             </select>
         </label><br>
+        <?php if ($currentRole === 'admin' || $currentRole === 'technician'): ?>
         <label>Vessel VIN<br><input type="text" name="vessel_vin" value="<?php echo htmlspecialchars($wo['vessel_vin'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
         <label>Vessel Hours<br><input type="number" step="0.5" name="vessel_hours" value="<?php echo htmlspecialchars($wo['vessel_hours'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
         <label>Labor Time<br><input type="text" name="labor_time" value="<?php echo htmlspecialchars($wo['labor_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
-        <label>Work Description<br><textarea name="work_description"><?php echo htmlspecialchars($wo['work_description'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea></label>
-        <label>Entry Date<br><input type="date" name="entry_date" value="<?php echo htmlspecialchars($wo['entry_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
-        <label>Time Entered<br><input type="time" name="time_entered" value="<?php echo htmlspecialchars($wo['time_entered'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
-        <label>Time Departed<br><input type="time" name="time_departed" value="<?php echo htmlspecialchars($wo['time_departed'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
+        <?php if ($currentRole === 'admin' || ($currentRole === 'technician' && $isAssignedTechnician)): ?>
+            <div style="margin-top:16px; padding:14px; border:1px solid #dfe7f1; border-radius:6px; background:#f8fbff;">
+                <h3 style="margin:0 0 10px;">Add Work Performed</h3>
+                <?php if ($techEntryMessage !== ''): ?>
+                    <p style="margin:0 0 10px; color:#0b5a2c; font-weight:600;"><?php echo htmlspecialchars($techEntryMessage, ENT_QUOTES, 'UTF-8'); ?></p>
+                <?php endif; ?>
+                <div style="display:flex; flex-direction:column; gap:10px; margin:0;">
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <label style="flex:1; min-width:160px; font-weight:700; margin:0;">Date<br><input type="date" name="performed_date" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
+                        <label style="flex:1; min-width:160px; font-weight:700; margin:0;">Time Spent<br><input type="time" name="performed_time" required step="900" style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
+                    </div>
+                    <label style="font-weight:700; margin:0;">Description<br><textarea name="performed_description" rows="4" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px; resize:vertical;"></textarea></label>
+                    <button type="submit" name="tech_action" value="add_work_performed" style="padding:10px 16px; background:#007BFF; color:#fff; border:none; border-radius:4px; cursor:pointer; width:max-content;">Save Work Performed</button>
+                </div>
+            </div>
+            <?php if (!empty($techWorkEntries)): ?>
+                <div style="margin-top:16px;">
+                    <h4 style="margin:0 0 8px;">Recent Work Performed Entries</h4>
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Date</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Time</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Performed By</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($techWorkEntries as $entry): ?>
+                                <tr>
+                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars(trim((($entry['firstname'] ?? '') . ' ' . ($entry['lastname'] ?? ''))) ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top; white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars($entry['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        <?php elseif ($currentRole === 'admin'): ?>
+            <label>Work Description<br><textarea name="work_description"><?php echo htmlspecialchars($wo['work_description'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea></label>
+            <label>Entry Date<br><input type="date" name="entry_date" value="<?php echo htmlspecialchars($wo['entry_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
+            <label>Time Entered<br><input type="time" name="time_entered" value="<?php echo htmlspecialchars($wo['time_entered'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
+            <label>Time Departed<br><input type="time" name="time_departed" value="<?php echo htmlspecialchars($wo['time_departed'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
+        <?php endif; ?>
+        <?php endif; ?>
     </fieldset>
     <?php endif; ?>
 
@@ -278,5 +428,6 @@ require_once '../includes/header.php';
         <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>">Cancel</a>
     </div>
 </form>
+<?php endif; ?>
 
 <?php require_once '../includes/footer.php'; ?>

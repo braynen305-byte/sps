@@ -173,7 +173,7 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <input type="hidden" name="action" value="quick_update">
                         <input type="hidden" name="workorder_id" value="<?php echo (int)$wo['id']; ?>">
                         <label>Status: <select name="status">
-                            <?php $statuses = ['Open','In Progress','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
+                            <?php $statuses = ['Pending','Open','In Progress','Waiting for Parts','Completed','Closed','On Hold']; foreach ($statuses as $st): ?>
                                 <option value="<?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($wo['status'] ?? '') === $st) ? 'selected' : ''; ?>><?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?></option>
                             <?php endforeach; ?>
                         </select></label><br>

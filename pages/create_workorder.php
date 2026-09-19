@@ -22,6 +22,22 @@ try {
     // ignore
 }
 
+function normalizeWorkOrderNumber($value) {
+    $raw = trim((string)($value ?? ''));
+    if ($raw === '') {
+        return null;
+    }
+
+    $withoutPrefix = preg_replace('/^WO/i', '', $raw);
+    $digitsOnly = preg_replace('/\D+/', '', $withoutPrefix ?? '');
+    if ($digitsOnly === '') {
+        return null;
+    }
+
+    $numeric = (int)$digitsOnly;
+    return 'WO' . str_pad((string)$numeric, 4, '0', STR_PAD_LEFT);
+}
+
 $title = 'Create Work Order';
 require_once '../includes/header.php';
 
@@ -47,13 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $orderReceivedBy = $_POST['order_received_by'] ?? $_SESSION['user_id'];
     $workPerformedBy = $_POST['work_performed_by'] ?? '';
     $priority = $_POST['priority'] ?? 'Normal';
-    $orderNumberRaw = trim($_POST['order_number'] ?? '');
-    if ($orderNumberRaw !== '') {
-        $clean = preg_replace('/^WO/i', '', $orderNumberRaw);
-        $orderNumber = 'WO' . $clean;
-    } else {
-        $orderNumber = null;
-    }
+    $orderNumber = normalizeWorkOrderNumber($_POST['order_number'] ?? '');
     $permissionAnytime = isset($_POST['permission_anytime']) ? 1 : 0;
     $permissionDate = $_POST['permission_date'] ?? '';
     $permissionTime = $_POST['permission_time'] ?? '';
@@ -77,14 +87,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ');
             
-                // If the current user is office staff, do not allow technician-only fields to be set
-                if (strtolower($_SESSION['role'] ?? '') === 'office') {
-                    $workPerformedBy = null;
-                    $workDescription = null;
-                    $vesselHours = null;
-                    $laborTime = null;
-                    $timeEntered = null;
-                    $timeDeparted = null;
+                if (!empty($workPerformedBy)) {
+                    $techCheck = $conn->prepare('SELECT id, role FROM staff WHERE id = ? LIMIT 1');
+                    $techCheck->execute([(int)$workPerformedBy]);
+                    $techRow = $techCheck->fetch(PDO::FETCH_ASSOC);
+                    $techRole = strtolower(trim((string)($techRow['role'] ?? '')));
+                    if (!$techRow || !in_array($techRole, ['technician', 'staff', ''], true)) {
+                        $workPerformedBy = null;
+                    }
                 }
 
                 $result = $stmt->execute([
@@ -97,6 +107,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
 
                 if ($result) {
+                $workOrderId = (int)$conn->lastInsertId();
+                try {
+                    $conn->exec("CREATE TABLE IF NOT EXISTS workorder_edits (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        workorder_id INT NOT NULL,
+                        field_name VARCHAR(255) NOT NULL,
+                        old_value LONGTEXT,
+                        new_value LONGTEXT,
+                        edited_by INT,
+                        edited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX(workorder_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+                    $creatorId = (int)($_POST['order_received_by'] ?? $_SESSION['user_id'] ?? 0);
+                    $historyStmt = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
+                    $historyStmt->execute([$workOrderId, 'order_received_by', null, (string)$creatorId, $creatorId]);
+                    if (!empty($workPerformedBy) && (int)$workPerformedBy > 0) {
+                        $historyStmt->execute([$workOrderId, 'work_performed_by', null, (string)$workPerformedBy, $creatorId]);
+                    }
+                } catch (Exception $historyEx) {
+                    // Ignore history logging failures so the work order still creates successfully.
+                }
                 $message = 'Work order created successfully.';
                 $messageType = 'success';
                 header('Location: /sps/pages/dashboard.php');
@@ -112,9 +143,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$staff = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
-$customers = $conn->query('SELECT id, name FROM customers ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
+$staff = $conn->query('SELECT id, firstname, lastname, role FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
+$technicians = [];
+foreach ($staff as $person) {
+    $personRole = strtolower(trim((string)($person['role'] ?? '')));
+    if ($personRole === 'admin' || $personRole === 'technician' || $personRole === 'staff' || $personRole === '') {
+        $technicians[] = $person;
+    }
+}
+$customers = $conn->query('SELECT id, name, phone, address FROM customers ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
 $currentRole = strtolower($_SESSION['role'] ?? '');
+$customerData = [];
+foreach ($customers as $cust) {
+    $customerData[(int)$cust['id']] = [
+        'name' => (string)($cust['name'] ?? ''),
+        'phone' => (string)($cust['phone'] ?? ''),
+        'address' => (string)($cust['address'] ?? '')
+    ];
+}
 ?>
 
 <style>
@@ -239,6 +285,55 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
     </p>
 <?php endif; ?>
 
+<?php
+$createdByName = 'You';
+foreach ($staff as $s) {
+    if ((int)$s['id'] === (int)($_SESSION['user_id'] ?? 0)) {
+        $createdByName = trim(($s['firstname'] ?? '') . ' ' . ($s['lastname'] ?? '')) ?: 'You';
+        break;
+    }
+}
+$assignedToLabel = 'Not Assigned';
+?>
+<div class="work-order-meta" style="max-width:900px;margin:18px auto 0;background:#f4f8ff;border:1px solid #d6e7ff;border-radius:8px;padding:12px 16px;display:flex;gap:20px;flex-wrap:wrap;">
+    <div><strong>Created By:</strong> <?php echo htmlspecialchars($createdByName, ENT_QUOTES, 'UTF-8'); ?></div>
+    <div><strong>Assigned To:</strong> <?php echo htmlspecialchars($assignedToLabel, ENT_QUOTES, 'UTF-8'); ?></div>
+</div>
+
+<script>
+const customerData = <?php echo json_encode($customerData, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
+function populateCustomerFields(selectedId) {
+    const selected = customerData[selectedId] || null;
+    const nameField = document.querySelector('input[name="client_name"]');
+    const phoneField = document.querySelector('input[name="client_phone"]');
+    const locationField = document.querySelector('input[name="location"]');
+
+    if (!nameField || !phoneField || !locationField) {
+        return;
+    }
+
+    if (!selected) {
+        nameField.value = '';
+        phoneField.value = '';
+        locationField.value = '';
+        return;
+    }
+
+    nameField.value = selected.name || '';
+    phoneField.value = selected.phone || '';
+    locationField.value = selected.address || '';
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const customerSelect = document.querySelector('select[name="customer_id"]');
+    if (customerSelect) {
+        customerSelect.addEventListener('change', function () {
+            populateCustomerFields(this.value);
+        });
+    }
+});
+</script>
+
 <form method="post" class="work-order-form">
     <!-- Header Section -->
     <div class="form-section">
@@ -246,7 +341,7 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
         <div class="form-row">
             <div class="form-group">
                 <label>Select Customer</label>
-                <select name="customer_id">
+                <select name="customer_id" id="customer_id_select">
                     <option value="">-- Select a Customer --</option>
                     <?php foreach ($customers as $cust): ?>
                         <option value="<?php echo (int)$cust['id']; ?>">
@@ -258,19 +353,18 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
         </div>
         <div class="form-row">
             <div class="form-group">
-            
                 <label>Client Name *</label>
-                <input type="text" name="client_name" required>
+                <input type="text" name="client_name" readonly required>
             </div>
             <div class="form-group">
                 <label>Client Phone</label>
-                <input type="tel" name="client_phone">
+                <input type="tel" name="client_phone" readonly>
             </div>
         </div>
         <div class="form-row">
             <div class="form-group">
                 <label>Location *</label>
-                <input type="text" name="location" required>
+                <input type="text" name="location" readonly required>
             </div>
         </div>
     </div>
@@ -280,7 +374,7 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
         <h3>ORDER DETAILS</h3>
         <div class="form-row">
             <div class="form-group">
-                <label>Order Received By</label>
+                <label>Created By</label>
                 <?php if ($currentRole === 'admin'): ?>
                     <select name="order_received_by">
                         <option value="">-- Select Staff --</option>
@@ -299,7 +393,9 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
                         }
                     ?>
                     <input type="hidden" name="order_received_by" value="<?php echo (int)$_SESSION['user_id']; ?>">
-                    <div><?php echo $me ? htmlspecialchars($me['firstname'] . ' ' . $me['lastname'], ENT_QUOTES, 'UTF-8') : 'You'; ?></div>
+                    <div style="background:#fff;padding:10px;border:1px solid #dfe3e8;border-radius:4px; font-weight:600;">
+                        <?php echo $me ? htmlspecialchars($me['firstname'] . ' ' . $me['lastname'], ENT_QUOTES, 'UTF-8') : 'You'; ?>
+                    </div>
                 <?php endif; ?>
             </div>
             <div class="form-group">
@@ -391,34 +487,36 @@ $currentRole = strtolower($_SESSION['role'] ?? '');
     </div>
 
     <!-- Work Performed -->
-    <?php if ($currentRole !== 'office'): ?>
     <div class="form-section">
-        <h3>WORK PERFORMED</h3>
+        <h3>WORK ASSIGNMENT</h3>
         <div class="form-row">
             <div class="form-group">
-                <label>Work Performed By</label>
+                <label>Assigned Technician</label>
                 <select name="work_performed_by">
-                    <option value="">-- Select Staff --</option>
-                    <?php foreach ($staff as $s): ?>
-                        <option value="<?php echo (int)$s['id']; ?>">
-                            <?php echo htmlspecialchars($s['firstname'] . ' ' . $s['lastname'], ENT_QUOTES, 'UTF-8'); ?>
+                    <option value="">-- Select Technician --</option>
+                    <?php foreach ($technicians as $tech): ?>
+                        <option value="<?php echo (int)$tech['id']; ?>">
+                            <?php echo htmlspecialchars($tech['firstname'] . ' ' . $tech['lastname'], ENT_QUOTES, 'UTF-8'); ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
             </div>
+            <?php if ($currentRole !== 'office'): ?>
             <div class="form-group">
                 <label>Vessel VIN #</label>
                 <input type="text" name="vessel_vin">
             </div>
+            <?php endif; ?>
         </div>
+        <?php if ($currentRole !== 'office'): ?>
         <div class="form-row full">
             <div class="form-group">
                 <label>Description of Work Completed and Materials Used</label>
                 <textarea name="work_description"></textarea>
             </div>
         </div>
+        <?php endif; ?>
     </div>
-    <?php endif; ?>
 
     <!-- Costs and Hours -->
     <div class="form-section">

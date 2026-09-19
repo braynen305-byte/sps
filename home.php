@@ -52,6 +52,14 @@ require_once 'includes/header.php';
 
     <div class="login-options" style="justify-content: flex-start; align-items: stretch; margin-top: 20px;">
         <div class="login-card" style="width: 100%; max-width: 100%; text-align: left;">
+            <h2>Customer Portal</h2>
+            <p>Customers can register for a secure account and view only the work orders associated with them. Their dashboard shows job status, a dedicated profile section, and a support area for service questions.</p>
+            <p><a href="/sps/customer_register.php">Create Customer Account</a> | <a href="/sps/customer_login.php">Customer Login</a></p>
+        </div>
+    </div>
+
+    <div class="login-options" style="justify-content: flex-start; align-items: stretch; margin-top: 20px;">
+        <div class="login-card" style="width: 100%; max-width: 100%; text-align: left;">
             <h2>About the Creator</h2>
             <p>Donshannon Braynen is the individual responsible for the design and development of this Service Portal system. He brought together the layout, navigation, and functionality to create a platform that is both practical and user-friendly.</p>
             <p>His work focused on making the system organized, easy to understand, and suited to the needs of the users who will rely on it every day.</p>

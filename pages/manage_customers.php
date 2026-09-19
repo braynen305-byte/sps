@@ -1,7 +1,8 @@
 <?php
 session_start();
 
-if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolower($_SESSION['role'] ?? '') !== 'admin') {
+$currentRole = strtolower($_SESSION['role'] ?? '');
+if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || !in_array($currentRole, ['admin', 'office'], true)) {
     header('Location: /sps/login.php');
     exit;
 }
@@ -18,7 +19,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'create') {
+        $accountType = trim($_POST['account_type'] ?? 'person');
         $name = trim($_POST['name'] ?? '');
+        $companyName = trim($_POST['company_name'] ?? '');
+        $companyContact = trim($_POST['company_contact'] ?? '');
         $phone = trim($_POST['phone'] ?? '');
         $email = trim($_POST['email'] ?? '');
         $address = trim($_POST['address'] ?? '');
@@ -26,12 +30,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $state = trim($_POST['state'] ?? '');
         $zip = trim($_POST['zip'] ?? '');
 
-        if ($name === '') {
+        if ($accountType === 'company' && $companyName === '') {
+            $message = 'Company name is required for company accounts.';
+            $messageType = 'error';
+        } elseif ($accountType === 'company' && $companyContact === '') {
+            $message = 'The person representing the company is required.';
+            $messageType = 'error';
+        } elseif ($name === '') {
             $message = 'Customer name is required.';
             $messageType = 'error';
         } else {
-            $stmt = $conn->prepare('INSERT INTO customers (name, phone, email, address, city, state, zip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())');
-            if ($stmt->execute([$name, $phone, $email, $address, $city, $state, $zip])) {
+            $displayName = $accountType === 'company' ? $companyName : $name;
+            $stmt = $conn->prepare('INSERT INTO customers (name, company_name, company_contact, phone, email, address, city, state, zip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
+            if ($stmt->execute([$displayName, $companyName, $companyContact, $phone, $email, $address, $city, $state, $zip])) {
                 $message = 'Customer added successfully.';
                 $messageType = 'success';
             } else {
@@ -41,7 +52,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'update') {
         $customerId = (int)($_POST['customer_id'] ?? 0);
+        $accountType = trim($_POST['account_type'] ?? 'person');
         $name = trim($_POST['name'] ?? '');
+        $companyName = trim($_POST['company_name'] ?? '');
+        $companyContact = trim($_POST['company_contact'] ?? '');
         $phone = trim($_POST['phone'] ?? '');
         $email = trim($_POST['email'] ?? '');
         $address = trim($_POST['address'] ?? '');
@@ -50,8 +64,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $zip = trim($_POST['zip'] ?? '');
 
         if ($customerId > 0 && $name !== '') {
-            $stmt = $conn->prepare('UPDATE customers SET name=?, phone=?, email=?, address=?, city=?, state=?, zip=?, updated_at=NOW() WHERE id=?');
-            if ($stmt->execute([$name, $phone, $email, $address, $city, $state, $zip, $customerId])) {
+            $displayName = $accountType === 'company' ? $companyName : $name;
+            $stmt = $conn->prepare('UPDATE customers SET name=?, company_name=?, company_contact=?, phone=?, email=?, address=?, city=?, state=?, zip=?, updated_at=NOW() WHERE id=?');
+            if ($stmt->execute([$displayName, $companyName, $companyContact, $phone, $email, $address, $city, $state, $zip, $customerId])) {
                 $message = 'Customer updated successfully.';
                 $messageType = 'success';
             } else {
@@ -111,6 +126,27 @@ $customers = $conn->query('SELECT * FROM customers ORDER BY name')->fetchAll(PDO
         form.classList.remove('show');
         document.getElementById('toggleFormBtn').textContent = '+ Add New Customer';
     }
+
+    function toggleCustomerMgmtFields() {
+        const accountType = document.getElementById('customer_account_type').value;
+        const customerNameGroup = document.getElementById('customer_name_group');
+        const companyNameGroup = document.getElementById('customer_company_name_group');
+        const companyContactGroup = document.getElementById('customer_company_contact_group');
+
+        if (accountType === 'company') {
+            customerNameGroup.classList.add('hidden');
+            companyNameGroup.classList.remove('hidden');
+            companyContactGroup.classList.remove('hidden');
+        } else {
+            customerNameGroup.classList.remove('hidden');
+            companyNameGroup.classList.add('hidden');
+            companyContactGroup.classList.add('hidden');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        toggleCustomerMgmtFields();
+    });
 </script>
 
 <div class="page-header">
@@ -133,22 +169,33 @@ $customers = $conn->query('SELECT * FROM customers ORDER BY name')->fetchAll(PDO
         <?php endif; ?>
         <div class="form-row">
             <div class="form-group">
+                <label>Account Type</label>
+                <select name="account_type" id="customer_account_type" onchange="toggleCustomerMgmtFields()">
+                    <option value="person" <?php echo (($editingCustomer['company_name'] ?? '') === '' ? 'selected' : ''); ?>>Person</option>
+                    <option value="company" <?php echo (($editingCustomer['company_name'] ?? '') !== '' ? 'selected' : ''); ?>>Company</option>
+                </select>
+            </div>
+            <div class="form-group" id="customer_name_group">
                 <label>Customer Name *</label>
                 <input type="text" name="name" value="<?php echo htmlspecialchars($editingCustomer['name'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" required>
+            </div>
+            <div class="form-group hidden" id="customer_company_name_group">
+                <label>Company Name</label>
+                <input type="text" name="company_name" value="<?php echo htmlspecialchars($editingCustomer['company_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group hidden" id="customer_company_contact_group">
+                <label>Person Representing Company</label>
+                <input type="text" name="company_contact" value="<?php echo htmlspecialchars($editingCustomer['company_contact'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
             </div>
             <div class="form-group">
                 <label>Phone</label>
                 <input type="tel" name="phone" value="<?php echo htmlspecialchars($editingCustomer['phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
             </div>
-        </div>
-        <div class="form-row">
             <div class="form-group">
                 <label>Email</label>
                 <input type="email" name="email" value="<?php echo htmlspecialchars($editingCustomer['email'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
-            </div>
-            <div class="form-group">
-                <label>City</label>
-                <input type="text" name="city" value="<?php echo htmlspecialchars($editingCustomer['city'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
             </div>
         </div>
         <div class="form-row full">
@@ -158,6 +205,10 @@ $customers = $conn->query('SELECT * FROM customers ORDER BY name')->fetchAll(PDO
             </div>
         </div>
         <div class="form-row">
+            <div class="form-group">
+                <label>City</label>
+                <input type="text" name="city" value="<?php echo htmlspecialchars($editingCustomer['city'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+            </div>
             <div class="form-group">
                 <label>State</label>
                 <input type="text" name="state" value="<?php echo htmlspecialchars($editingCustomer['state'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">

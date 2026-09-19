@@ -32,18 +32,94 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
 
 require_once '../includes/dbh.inc.php';
 
+$conn->exec("CREATE TABLE IF NOT EXISTS work_performed_entries (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    workorder_id INT NOT NULL,
+    performed_date DATE NOT NULL,
+    performed_time TIME NOT NULL,
+    description LONGTEXT NOT NULL,
+    added_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX(workorder_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
 $id = (int)($_GET['id'] ?? 0);
 if (!$id) {
     header('Location: /sps/pages/dashboard.php');
     exit;
 }
 
-$stmt = $conn->prepare('SELECT w.*, r.firstname AS received_first, r.lastname AS received_last, p.firstname AS performed_first, p.lastname AS performed_last FROM workorders w LEFT JOIN staff r ON w.order_received_by = r.id LEFT JOIN staff p ON w.work_performed_by = p.id WHERE w.id = ?');
+$stmt = $conn->prepare('SELECT w.*, r.firstname AS received_first, r.lastname AS received_last, p.firstname AS performed_first, p.lastname AS performed_last, p.role AS performed_role FROM workorders w LEFT JOIN staff r ON w.order_received_by = r.id LEFT JOIN staff p ON w.work_performed_by = p.id WHERE w.id = ?');
 $stmt->execute([$id]);
 $wo = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$wo) {
     echo 'Work order not found.';
     exit;
+}
+
+$displayOrderNumber = !empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT);
+
+$assignedTechDisplay = 'Not Assigned';
+if (!empty($wo['work_performed_by'])) {
+    $assignedTechStmt = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+    $assignedTechStmt->execute([(int)$wo['work_performed_by']]);
+    $assignedTechRow = $assignedTechStmt->fetch(PDO::FETCH_ASSOC);
+    $assignedRole = strtolower(trim((string)($assignedTechRow['role'] ?? '')));
+    if ($assignedTechRow && ($assignedRole === 'admin' || in_array($assignedRole, ['technician', 'staff', ''], true))) {
+        $assignedTechDisplay = trim(($assignedTechRow['firstname'] ?? '') . ' ' . ($assignedTechRow['lastname'] ?? ''));
+    }
+}
+if ($assignedTechDisplay === 'Not Assigned') {
+    try {
+        $latestAssignment = $conn->prepare("SELECT new_value FROM workorder_edits WHERE workorder_id = ? AND field_name = 'work_performed_by' ORDER BY edited_at DESC LIMIT 1");
+        $latestAssignment->execute([$id]);
+        $latestAssignmentRow = $latestAssignment->fetch(PDO::FETCH_ASSOC);
+        if ($latestAssignmentRow && !empty($latestAssignmentRow['new_value'])) {
+            $assignmentId = trim((string)$latestAssignmentRow['new_value']);
+            if (is_numeric($assignmentId)) {
+                $assignmentLookup = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
+                $assignmentLookup->execute([(int)$assignmentId]);
+                $assignmentRow = $assignmentLookup->fetch(PDO::FETCH_ASSOC);
+                $assignmentRole = strtolower(trim((string)($assignmentRow['role'] ?? '')));
+                if ($assignmentRow && ($assignmentRole === 'admin' || in_array($assignmentRole, ['technician', 'staff', ''], true))) {
+                    $assignedTechDisplay = trim(($assignmentRow['firstname'] ?? '') . ' ' . ($assignmentRow['lastname'] ?? ''));
+                }
+            }
+        }
+    } catch (Exception $ex) {
+        // ignore assignment lookup errors
+    }
+}
+
+if (empty($wo['order_received_by']) || empty($wo['received_first'])) {
+    $creatorLookup = $conn->prepare('SELECT e.new_value, e.edited_by, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = ? ORDER BY e.edited_at DESC LIMIT 1');
+    $creatorLookup->execute([$id, 'order_received_by']);
+    $creatorRow = $creatorLookup->fetch(PDO::FETCH_ASSOC);
+    if ($creatorRow) {
+        $creatorValue = trim((string)($creatorRow['new_value'] ?? ''));
+        if ($creatorValue !== '' && is_numeric($creatorValue)) {
+            $wo['order_received_by'] = (int)$creatorValue;
+            $creatorStaff = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+            $creatorStaff->execute([$wo['order_received_by']]);
+            $creatorStaffRow = $creatorStaff->fetch(PDO::FETCH_ASSOC);
+            if ($creatorStaffRow) {
+                $wo['received_first'] = $creatorStaffRow['firstname'] ?? '';
+                $wo['received_last'] = $creatorStaffRow['lastname'] ?? '';
+            }
+        } elseif (!empty($creatorRow['firstname']) || !empty($creatorRow['lastname'])) {
+            $wo['received_first'] = $creatorRow['firstname'] ?? '';
+            $wo['received_last'] = $creatorRow['lastname'] ?? '';
+        } elseif (!empty($creatorRow['edited_by'])) {
+            $wo['order_received_by'] = (int)$creatorRow['edited_by'];
+            $creatorStaff = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+            $creatorStaff->execute([$wo['order_received_by']]);
+            $creatorStaffRow = $creatorStaff->fetch(PDO::FETCH_ASSOC);
+            if ($creatorStaffRow) {
+                $wo['received_first'] = $creatorStaffRow['firstname'] ?? '';
+                $wo['received_last'] = $creatorStaffRow['lastname'] ?? '';
+            }
+        }
+    }
 }
 
 $currentRole = strtolower($_SESSION['role'] ?? '');
@@ -56,7 +132,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $currentRole === 'technician') {
         $techAction = $_POST['tech_action'];
         $targetTech = isset($_POST['new_tech']) ? (int)$_POST['new_tech'] : 0;
 
-        if ($techAction === 'opt_out') {
+        if ($techAction === 'add_work_performed') {
+            $performedDate = trim((string)($_POST['performed_date'] ?? ''));
+            $performedTime = trim((string)($_POST['performed_time'] ?? ''));
+            $description = trim((string)($_POST['performed_description'] ?? ''));
+
+            if ($performedDate !== '' && $performedTime !== '' && $description !== '') {
+                $insertEntry = $conn->prepare('INSERT INTO work_performed_entries (workorder_id, performed_date, performed_time, description, added_by) VALUES (?, ?, ?, ?, ?)');
+                $insertEntry->execute([$id, $performedDate, $performedTime, $description, $userId]);
+                $techActionMessage = 'Work performed entry added successfully.';
+            } else {
+                $techActionMessage = 'Please enter a date, time, and description for the work performed entry.';
+            }
+        } elseif ($techAction === 'opt_out') {
             $oldValue = $wo['work_performed_by'];
             $upd = $conn->prepare('UPDATE workorders SET work_performed_by = NULL WHERE id = ?');
             $upd->execute([$id]);
@@ -83,6 +171,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $currentRole === 'technician') {
 }
 
 $techs = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
+$workPerformedEntries = $conn->prepare('SELECT wpe.*, s.firstname, s.lastname FROM work_performed_entries wpe LEFT JOIN staff s ON s.id = wpe.added_by WHERE wpe.workorder_id = ? ORDER BY wpe.performed_date DESC, wpe.performed_time DESC');
+$workPerformedEntries->execute([$id]);
+$workPerformedEntries = $workPerformedEntries->fetchAll(PDO::FETCH_ASSOC);
+
+$totalWorkSeconds = 0;
+foreach ($workPerformedEntries as $entry) {
+    if (!empty($entry['performed_time'])) {
+        $parts = explode(':', (string)$entry['performed_time']);
+        if (isset($parts[0], $parts[1])) {
+            $totalWorkSeconds += ((int)$parts[0] * 3600) + ((int)$parts[1] * 60) + ((int)($parts[2] ?? 0));
+        }
+    }
+}
+$totalWorkHours = intdiv($totalWorkSeconds, 3600);
+$totalWorkMinutes = intdiv($totalWorkSeconds % 3600, 60);
+$totalWorkText = sprintf('%02d:%02d', $totalWorkHours, $totalWorkMinutes);
 
 $title = 'View Work Order';
 require_once '../includes/header.php';
@@ -98,13 +202,63 @@ require_once '../includes/header.php';
     .wo-meta { width: 240px; font-weight: 700; color: #333; padding-right: 8px; }
     .edit-link { background-color: #007BFF; color: white; padding:6px 10px; border-radius:4px; text-decoration:none; }
     .view-link { background-color: #17a2b8; color: white; padding:6px 10px; border-radius:4px; text-decoration:none; }
-    .history-toggle-container { display:flex; justify-content:flex-end; margin-top:6px; }
+    .history-toggle-container { display:flex; justify-content:flex-end; width:100%; margin-top:6px; }
+    .history-button-row { display:flex; justify-content:flex-end; align-items:center; width:100%; max-width:960px; margin:12px auto 8px; position:relative; }
+    .history-toggle-btn { width:100%; max-width:960px; text-align:center; display:block; }
     .small-toggle-btn { background: transparent; color: #007BFF; border: 1px solid #007BFF; padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; transition: all .15s ease; }
     .small-toggle-btn:hover { background: #007BFF; color: #fff; }
+    .history-table,
+    .history-table th,
+    .history-table td,
+    #assignment-history-body table,
+    #assignment-history-body table th,
+    #assignment-history-body table td,
+    #work-performed-history-body table,
+    #work-performed-history-body table th,
+    #work-performed-history-body table td,
+    #tech-history-body table,
+    #tech-history-body table th,
+    #tech-history-body table td {
+        width: 100%;
+        max-width: 960px;
+        border-collapse: collapse;
+        text-align: center;
+        table-layout: fixed;
+    }
+    .history-table tbody tr:nth-child(odd),
+    #assignment-history-body table tbody tr:nth-child(odd),
+    #work-performed-history-body table tbody tr:nth-child(odd),
+    #tech-history-body table tbody tr:nth-child(odd) {
+        background-color: #f8fafc;
+    }
+    .history-table tbody tr:nth-child(even),
+    #assignment-history-body table tbody tr:nth-child(even),
+    #work-performed-history-body table tbody tr:nth-child(even),
+    #tech-history-body table tbody tr:nth-child(even) {
+        background-color: #eef3f8;
+    }
+    .history-table th:nth-child(1), .history-table td:nth-child(1),
+    #assignment-history-body table th:nth-child(1), #assignment-history-body table td:nth-child(1),
+    #work-performed-history-body table th:nth-child(1), #work-performed-history-body table td:nth-child(1),
+    #tech-history-body table th:nth-child(1), #tech-history-body table td:nth-child(1) {
+        width: 22%;
+    }
+    .history-table th:nth-child(2), .history-table td:nth-child(2),
+    #assignment-history-body table th:nth-child(2), #assignment-history-body table td:nth-child(2),
+    #work-performed-history-body table th:nth-child(2), #work-performed-history-body table td:nth-child(2),
+    #tech-history-body table th:nth-child(2), #tech-history-body table td:nth-child(2) {
+        width: 28%;
+    }
+    .history-table th:nth-child(3), .history-table td:nth-child(3),
+    #assignment-history-body table th:nth-child(3), #assignment-history-body table td:nth-child(3),
+    #work-performed-history-body table th:nth-child(3), #work-performed-history-body table td:nth-child(3),
+    #tech-history-body table th:nth-child(3), #tech-history-body table td:nth-child(3) {
+        width: 50%;
+    }
 </style>
 
 <div class="wo-card">
-<h2>View Work Order #<?php echo (int)$wo['id']; ?></h2>
+<h2>Work Order # <?php echo htmlspecialchars($displayOrderNumber, ENT_QUOTES, 'UTF-8'); ?></h2>
 <p><a href="/sps/pages/dashboard.php">← Back to Dashboard</a>
 <?php if (in_array($currentRole, ['admin','office','technician'])): ?>
     | <a class="edit-link" href="/sps/pages/edit_workorder.php?id=<?php echo (int)$wo['id']; ?>">Edit</a>
@@ -135,6 +289,19 @@ require_once '../includes/header.php';
             <button type="submit" class="view-link" style="border:none; cursor:pointer; background:#6c757d;">Opt Out of This Work Order</button>
         </form>
     </div>
+
+    <div style="margin: 12px 0 18px; padding: 12px; border: 1px solid #dfe7f1; border-radius: 6px; background: #fffdf7;">
+        <h3 style="margin:0 0 12px;">Add Work Performed</h3>
+        <form method="post" style="display:flex; flex-direction:column; gap:10px; max-width:520px;">
+            <input type="hidden" name="tech_action" value="add_work_performed">
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <label style="flex:1; min-width:160px; font-weight:700;">Date<br><input type="date" name="performed_date" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
+                <label style="flex:1; min-width:160px; font-weight:700;">Time Spent<br><input type="time" name="performed_time" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;" step="900"></label>
+            </div>
+            <label style="font-weight:700;">Description<br><textarea name="performed_description" rows="4" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px; resize:vertical;"></textarea></label>
+            <button type="submit" class="edit-link" style="border:none; cursor:pointer; width:max-content;">Save Work Performed</button>
+        </form>
+    </div>
 <?php endif; ?>
 
 <?php
@@ -162,14 +329,15 @@ try {
 ?>
 <table class="wo-table" style="width:100%;">
     <tbody>
-    <tr><th class="wo-meta">Assigned To</th><td><?php echo htmlspecialchars((($wo['performed_first'] ?? '') ? ($wo['performed_first'].' '.($wo['performed_last'] ?? '')) : 'Unassigned'), ENT_QUOTES, 'UTF-8'); ?></td></tr>
+    <tr><th class="wo-meta">Assigned To</th><td><?php echo htmlspecialchars($assignedTechDisplay, ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Client Name</th><td><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Client Phone</th><td><?php echo htmlspecialchars($wo['client_phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Location</th><td><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Order Date</th><td><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
+    <tr><th class="wo-meta">Status</th><td><?php $rawStatus = isset($wo['status']) ? (string)$wo['status'] : 'Open'; $statusClass = strtolower(trim($rawStatus)); $statusStyle = 'display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;color:#fff;'; if ($statusClass === 'completed' || $statusClass === 'closed') { $statusStyle .= 'background:#198754;'; } elseif ($statusClass === 'waiting for parts') { $statusStyle .= 'background:#d97706;'; } elseif ($statusClass === 'on hold') { $statusStyle .= 'background:#7c3aed;'; } elseif ($statusClass === 'in progress') { $statusStyle .= 'background:#2563eb;'; } elseif ($statusClass === 'pending') { $statusStyle .= 'background:#6b7280;'; } elseif ($statusClass === 'open') { $statusStyle .= 'background:#0ea5e9;'; } else { $statusStyle .= 'background:#1d4ed8;'; } echo '<span style="' . htmlspecialchars($statusStyle, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($rawStatus, ENT_QUOTES, 'UTF-8') . '</span>'; ?> <button type="button" id="status-guide-toggle" aria-label="Open status guide" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:1px solid #cbd5e1; border-radius:50%; background:#eff6ff; color:#1d4ed8; cursor:pointer; font-size:12px; line-height:1; font-weight:700; padding:0; vertical-align:middle;">ⓘ</button></td></tr>
     <tr><th class="wo-meta">Priority</th><td><?php $rawPriority = isset($wo['priority']) ? (string)$wo['priority'] : 'Normal'; $isHigh = (strtolower(trim($rawPriority)) === 'high'); ?><span style="<?php echo $isHigh ? 'color:#721c24;background:#f8d7da;padding:4px 8px;border-radius:4px;' : ''; ?>"><?php echo htmlspecialchars($rawPriority, ENT_QUOTES, 'UTF-8'); ?></span></td></tr>
-    <tr><th class="wo-meta">Expected Start</th><td><?php echo htmlspecialchars($wo['expected_start_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Expected End</th><td><?php echo htmlspecialchars($wo['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
+    <tr><th class="wo-meta">Expected Start</th><td><?php echo htmlspecialchars(!empty($wo['expected_start_date']) ? $wo['expected_start_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></td></tr>
+    <tr><th class="wo-meta">Expected End</th><td><?php echo htmlspecialchars(!empty($wo['expected_end_date']) ? $wo['expected_end_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Requested Work</th><td><?php echo nl2br(htmlspecialchars($wo['requested_work'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td></tr>
     <tr><th class="wo-meta">Additional Comments</th><td><?php echo nl2br(htmlspecialchars($wo['additional_comments'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td></tr>
     <tr><th class="wo-meta">Vessel VIN</th><td><?php echo htmlspecialchars($wo['vessel_vin'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
@@ -177,8 +345,7 @@ try {
     <tr><th class="wo-meta">Labor Time</th><td><?php echo htmlspecialchars($wo['labor_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Parts/Materials Cost</th><td><?php echo htmlspecialchars($wo['parts_cost'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Chargeable To</th><td><?php echo htmlspecialchars($wo['chargeable_to'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Order Received By</th><td><?php echo htmlspecialchars((($wo['received_first'] ?? '') ? ($wo['received_first'].' '.($wo['received_last'] ?? '')) : ''), ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Work Performed By</th><td><?php echo htmlspecialchars((($wo['performed_first'] ?? '') ? ($wo['performed_first'].' '.($wo['performed_last'] ?? '')) : ''), ENT_QUOTES, 'UTF-8'); ?></td></tr>
+    <tr><th class="wo-meta">Created By</th><td><?php echo htmlspecialchars((($wo['received_first'] ?? '') ? ($wo['received_first'].' '.($wo['received_last'] ?? '')) : 'Unknown'), ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Permission Anytime</th><td><?php echo $wo['permission_anytime'] ? 'Yes' : 'No'; ?></td></tr>
     <tr><th class="wo-meta">Permission Date/Time</th><td><?php echo htmlspecialchars($wo['permission_date'] ?? '', ENT_QUOTES, 'UTF-8') . ' ' . htmlspecialchars($wo['permission_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
     <tr><th class="wo-meta">Entry Date / Time Entered / Departed</th><td><?php echo htmlspecialchars($wo['entry_date'] ?? '', ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($wo['time_entered'] ?? '', ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($wo['time_departed'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
@@ -194,6 +361,52 @@ try {
 </table>
 </div>
 
+<div id="status-guide-panel" style="display:none; max-width:960px; margin:0 auto 20px; padding:12px 16px; border:1px solid #dfe7f1; border-radius:8px; background:#f8fafc; box-sizing:border-box;">
+    <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">Status guide</div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
+        <div style="padding:8px 10px; border:1px solid #dbeafe; border-radius:8px; background:#eff6ff; color:#1d4ed8; font-size:12px; line-height:1.4;"><strong>Open:</strong> Your request has been received and is waiting for review.</div>
+        <div style="padding:8px 10px; border:1px solid #dbeafe; border-radius:8px; background:#eff6ff; color:#1d4ed8; font-size:12px; line-height:1.4;"><strong>In Progress:</strong> A technician is actively working on your job.</div>
+        <div style="padding:8px 10px; border:1px solid #fef3c7; border-radius:8px; background:#fffbeb; color:#92400e; font-size:12px; line-height:1.4;"><strong>Waiting for Parts:</strong> The job is paused until required materials arrive.</div>
+        <div style="padding:8px 10px; border:1px solid #e9d5ff; border-radius:8px; background:#faf5ff; color:#6b21a8; font-size:12px; line-height:1.4;"><strong>On Hold:</strong> Work is paused because of scheduling, access, or a customer decision.</div>
+        <div style="padding:8px 10px; border:1px solid #dcfce7; border-radius:8px; background:#f0fdf4; color:#166534; font-size:12px; line-height:1.4;"><strong>Completed:</strong> The service has been finished and is ready for review.</div>
+        <div style="padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#f3f4f6; color:#374151; font-size:12px; line-height:1.4;"><strong>Closed:</strong> The job has been fully closed and archived.</div>
+    </div>
+</div>
+
+<?php if (!empty($workPerformedEntries)): ?>
+    <div style="max-width:960px; margin:0 auto 12px; padding:14px; border:1px solid #dfe7f1; border-radius:8px; background:#fff; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+            <h3 style="margin:0;">Work Performed Entries</h3>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <button type="button" class="small-toggle-btn" data-toggle-target="work-performed-entries-body" aria-expanded="false">Show</button>
+                <span style="background:#e8f5e9; color:#166534; font-weight:700; border-radius:999px; padding:6px 10px;">Total Time: <?php echo htmlspecialchars($totalWorkText, ENT_QUOTES, 'UTF-8'); ?></span>
+            </div>
+        </div>
+        <div id="work-performed-entries-body" style="display:none;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Date</th>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Time</th>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Performed By</th>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($workPerformedEntries as $entry): ?>
+                        <tr>
+                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars(trim((($entry['firstname'] ?? '') . ' ' . ($entry['lastname'] ?? ''))) ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top; white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars($entry['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+<?php endif; ?>
+
 <?php
 // show full history (creation + edits) - only for non-technician roles
 if ($currentRole !== 'technician') {
@@ -206,15 +419,15 @@ if ($currentRole !== 'technician') {
     $edStmt->execute([$id]);
     $edits = $edStmt->fetchAll(PDO::FETCH_ASSOC);
     if ($createdAt || $creatorName || $edits): ?>
-        <div class="history-toggle-container">
-            <button id="toggle-history-btn" class="small-toggle-btn" aria-expanded="false" aria-controls="history-wrapper">Show History</button>
-        </div>
         <h3>Complete History</h3>
         <p style="margin:4px 0 8px; color:#666; font-size:0.95em;">Edits: <?php echo is_array($edits) ? count($edits) : 0; ?></p>
+        <div class="history-toggle-container">
+            <button id="toggle-history-btn" class="small-toggle-btn history-toggle-btn" data-toggle-target="history-wrapper" aria-expanded="false" aria-controls="history-wrapper">Show History</button>
+        </div>
 
         <div id="history-wrapper" style="display:none; margin-top:6px; padding-bottom:24px;">
-        <table id="history-table" style="width:100%; border-collapse: collapse;">
-            <thead><tr><th style="text-align:left; padding:6px; width:170px;">When</th><th style="text-align:left; padding:6px; width:200px;">Who</th><th style="text-align:left; padding:6px;">Event</th></tr></thead>
+        <table id="history-table" class="history-table" style="max-width:960px; margin:0 auto;">
+            <thead><tr><th style="text-align:center; padding:6px; width:170px;">When</th><th style="text-align:center; padding:6px; width:200px;">Who</th><th style="text-align:center; padding:6px;">Event</th></tr></thead>
             <tbody>
                 <?php if ($createdAt): ?>
                     <tr>
@@ -236,31 +449,14 @@ if ($currentRole !== 'technician') {
             </tbody>
         </table>
         </div>
-        <script>
-            (function(){
-                var wrapper = document.getElementById('history-wrapper');
-                var btn = document.getElementById('toggle-history-btn');
-                if(!wrapper || !btn) return;
-                var visible = false;
-                btn.addEventListener('click', function(){
-                    visible = !visible;
-                    wrapper.style.display = visible ? 'block' : 'none';
-                    btn.textContent = visible ? 'Hide History' : 'Show History';
-                    if(visible){
-                        // ensure history and button are visible above footer
-                        setTimeout(function(){
-                            try{ wrapper.scrollIntoView({behavior:'smooth', block:'end'}); }catch(e){}
-                        }, 80);
-                    }
-                });
-            })();
-        </script>
     <?php endif;
     } catch (Exception $ex) {
         // ignore if edit table missing
     }
 }
+?>
 
+<?php
 // Assignment and work-performed history
 try {
     $assignStmt = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC");
@@ -299,12 +495,16 @@ try {
             return strcmp(($b['edited_at'] ?? ''), ($a['edited_at'] ?? ''));
         });
 
-        echo "<h3>Technician History</h3>";
+        echo '<div style="max-width:960px; margin:0 auto 12px;">';
+        echo '<div class="history-button-row">';
+        echo '<button type="button" class="small-toggle-btn history-toggle-btn" data-toggle-target="tech-history-body" aria-expanded="false">Show Technician History</button>';
+        echo '</div>';
+        echo '<div id="tech-history-body" style="display:none;">';
         if (empty($techHistory)) {
             echo '<p style="max-width:900px;margin:6px auto;">No technician history recorded.</p>';
         } else {
-            echo '<table style="width:100%; border-collapse: collapse; max-width:960px; margin:6px auto 36px;">';
-            echo '<thead><tr><th style="text-align:left; padding:6px; width:180px;">When</th><th style="text-align:left; padding:6px; width:200px;">Who</th><th style="text-align:left; padding:6px;">Event</th></tr></thead><tbody>';
+            echo '<table class="history-table" style="max-width:960px; margin:6px auto 36px;">';
+            echo '<thead><tr><th style="text-align:center; padding:6px; width:180px;">When</th><th style="text-align:center; padding:6px; width:200px;">Who</th><th style="text-align:center; padding:6px;">Event</th></tr></thead><tbody>';
             foreach ($techHistory as $h) {
                 echo '<tr><td style="padding:6px;">'.htmlspecialchars($h['edited_at'] ?? '', ENT_QUOTES, 'UTF-8').'</td>';
                 echo '<td style="padding:6px;">'.htmlspecialchars($h['who'] ?? '', ENT_QUOTES, 'UTF-8').'</td>';
@@ -312,59 +512,73 @@ try {
             }
             echo '</tbody></table>';
         }
+        echo '</div>';
+        echo '</div>';
     } else {
         // non-technician: show separate Assignment and Work Performed history as before
         if ((!empty($assigns) && count($assigns) > 0) || (!empty($workPerformedEdits) && count($workPerformedEdits) > 0)):
 ?>
-    <h3>Assignment History</h3>
-    <?php if (empty($assigns)): ?>
-        <p style="max-width:900px;margin:6px auto;">No assignment events recorded.</p>
-    <?php else: ?>
-        <table style="width:100%; border-collapse: collapse; max-width:960px; margin:6px auto 18px;">
-            <thead><tr><th style="text-align:left; padding:6px; width:180px;">When</th><th style="text-align:left; padding:6px; width:200px;">Assigned By</th><th style="text-align:left; padding:6px;">Assigned To</th></tr></thead>
-            <tbody>
-            <?php foreach ($assigns as $a):
-                $assigner = ($a['firstname'] ? ($a['firstname'].' '.($a['lastname'] ?? '')) : ('User '.($a['edited_by'] ?? '')));
-                $assignedTo = '';
-                $newVal = $a['new_value'] ?? '';
-                if (is_numeric($newVal) && (int)$newVal > 0) {
-                    $tstmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
-                    $tstmt->execute([(int)$newVal]);
-                    $trow = $tstmt->fetch(PDO::FETCH_ASSOC);
-                    if ($trow) $assignedTo = trim(($trow['firstname'] ?? '') . ' ' . ($trow['lastname'] ?? ''));
-                } else {
-                    $assignedTo = $newVal ?: '(unset)';
-                }
-            ?>
-                <tr>
-                    <td style="padding:6px;"><?php echo htmlspecialchars($a['edited_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td style="padding:6px;"><?php echo htmlspecialchars($assigner, ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td style="padding:6px;"><?php echo htmlspecialchars($assignedTo, ENT_QUOTES, 'UTF-8'); ?></td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    <?php endif; ?>
+    <div style="max-width:960px; margin:0 auto 12px;">
+        <div class="history-button-row">
+            <button type="button" class="small-toggle-btn history-toggle-btn" data-toggle-target="assignment-history-body" aria-expanded="false">Show Assignment History</button>
+        </div>
+        <div id="assignment-history-body" style="display:none; width:100%; max-width:960px; margin:0 auto;">
+            <?php if (empty($assigns)): ?>
+                <p style="max-width:900px;margin:6px auto;">No assignment events recorded.</p>
+            <?php else: ?>
+                <table class="history-table" style="max-width:960px; margin:6px auto 18px;">
+                    <thead><tr><th style="text-align:center; padding:6px; width:180px;">When</th><th style="text-align:center; padding:6px; width:200px;">Assigned By</th><th style="text-align:center; padding:6px;">Assigned To</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($assigns as $a):
+                        $assigner = ($a['firstname'] ? ($a['firstname'].' '.($a['lastname'] ?? '')) : ('User '.($a['edited_by'] ?? '')));
+                        $assignedTo = '';
+                        $newVal = $a['new_value'] ?? '';
+                        if (is_numeric($newVal) && (int)$newVal > 0) {
+                            $tstmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
+                            $tstmt->execute([(int)$newVal]);
+                            $trow = $tstmt->fetch(PDO::FETCH_ASSOC);
+                            if ($trow) $assignedTo = trim(($trow['firstname'] ?? '') . ' ' . ($trow['lastname'] ?? ''));
+                        } else {
+                            $assignedTo = $newVal ?: '(unset)';
+                        }
+                    ?>
+                        <tr>
+                            <td style="padding:6px;"><?php echo htmlspecialchars($a['edited_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:6px;"><?php echo htmlspecialchars($assigner, ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:6px;"><?php echo htmlspecialchars($assignedTo, ENT_QUOTES, 'UTF-8'); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    </div>
 
-    <h3>Work Performed History</h3>
-    <?php if (empty($workPerformedEdits)): ?>
-        <p style="max-width:900px;margin:6px auto;">No work-performed edits recorded.</p>
-    <?php else: ?>
-        <table style="width:100%; border-collapse: collapse; max-width:960px; margin:6px auto 36px;">
-            <thead><tr><th style="text-align:left; padding:6px; width:180px;">When</th><th style="text-align:left; padding:6px; width:200px;">Who</th><th style="text-align:left; padding:6px;">Change</th></tr></thead>
-            <tbody>
-            <?php foreach ($workPerformedEdits as $e): ?>
-                <tr>
-                    <td style="padding:6px;"><?php echo htmlspecialchars($e['edited_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td style="padding:6px;"><?php echo htmlspecialchars((($e['firstname'] ?? '') ? ($e['firstname'].' '.($e['lastname'] ?? '')) : ('User '.($e['edited_by'] ?? ''))), ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td style="padding:6px;">
-                        <?php echo htmlspecialchars(formatHistoryEventText($e['field_name'] ?? '', $e['old_value'] ?? '', $e['new_value'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    <?php endif; ?>
+    <div style="max-width:960px; margin:0 auto 12px;">
+        <div class="history-button-row">
+            <button type="button" class="small-toggle-btn history-toggle-btn" data-toggle-target="work-performed-history-body" aria-expanded="false">Show Work Performed History</button>
+        </div>
+        <div id="work-performed-history-body" style="display:none; width:100%; max-width:960px; margin:0 auto;">
+            <?php if (empty($workPerformedEdits)): ?>
+                <p style="max-width:900px;margin:6px auto;">No work-performed edits recorded.</p>
+            <?php else: ?>
+                <table class="history-table" style="max-width:960px; margin:6px auto 36px;">
+                    <thead><tr><th style="text-align:center; padding:6px; width:180px;">When</th><th style="text-align:center; padding:6px; width:200px;">Who</th><th style="text-align:center; padding:6px;">Change</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($workPerformedEdits as $e): ?>
+                        <tr>
+                            <td style="padding:6px;"><?php echo htmlspecialchars($e['edited_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:6px;"><?php echo htmlspecialchars((($e['firstname'] ?? '') ? ($e['firstname'].' '.($e['lastname'] ?? '')) : ('User '.($e['edited_by'] ?? ''))), ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:6px;">
+                                <?php echo htmlspecialchars(formatHistoryEventText($e['field_name'] ?? '', $e['old_value'] ?? '', $e['new_value'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    </div>
 <?php
         endif;
     }
@@ -374,3 +588,36 @@ try {
 
 require_once '../includes/footer.php';
 ?>
+
+<script>
+(function(){
+    var statusGuideToggle = document.getElementById('status-guide-toggle');
+    var statusGuidePanel = document.getElementById('status-guide-panel');
+    if (statusGuideToggle && statusGuidePanel) {
+        statusGuideToggle.addEventListener('click', function(){
+            var isVisible = statusGuidePanel.style.display !== 'none';
+            statusGuidePanel.style.display = isVisible ? 'none' : 'block';
+        });
+    }
+
+    document.querySelectorAll('[data-toggle-target]').forEach(function(button){
+        var targetId = button.getAttribute('data-toggle-target');
+        var target = targetId ? document.getElementById(targetId) : null;
+        if (!target) { return; }
+        var defaultText = button.textContent.trim();
+        var hideText = defaultText.replace(/^Show\s+/, 'Hide ');
+        if (defaultText.indexOf('Assignment History') !== -1) {
+            hideText = 'Hide Assignment History';
+        }
+        if (defaultText.indexOf('Work Performed History') !== -1) {
+            hideText = 'Hide Work Performed History';
+        }
+        button.addEventListener('click', function(){
+            var isVisible = target.style.display !== 'none';
+            target.style.display = isVisible ? 'none' : 'block';
+            button.textContent = isVisible ? defaultText : hideText;
+            button.setAttribute('aria-expanded', String(!isVisible));
+        });
+    });
+})();
+</script>

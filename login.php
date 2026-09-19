@@ -7,7 +7,7 @@ include "includes/login.inc.php";
 <p id="login-instructions">Please login using the form below.</p>
 
 <div class="container">
-    <h1>SERVICE PORTAL LOGIN</h1>
+    <h1>STAFF LOGIN</h1>
 
         <form action="/sps/login.php" method="post">
 

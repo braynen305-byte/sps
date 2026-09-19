@@ -57,7 +57,7 @@ require_once '../includes/header.php';
 $searchClient = trim($_GET['search_client'] ?? '');
 $sortBy = $_GET['sort_by'] ?? 'recent';
 
-$query = 'SELECT w.*, s.firstname AS assignee_firstname, s.lastname AS assignee_lastname FROM workorders w LEFT JOIN staff s ON s.id = w.work_performed_by WHERE 1=1';
+$query = 'SELECT w.*, s.firstname AS assignee_firstname, s.lastname AS assignee_lastname, s.role AS assignee_role, c.firstname AS creator_firstname, c.lastname AS creator_lastname FROM workorders w LEFT JOIN staff s ON s.id = w.work_performed_by LEFT JOIN staff c ON c.id = w.order_received_by WHERE 1=1';
 $params = [];
 
 if ($searchClient !== '') {
@@ -241,9 +241,10 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <table class="workorder-table">
         <thead>
             <tr>
-                <th>Order ID</th>
+                <th>WO#</th>
                 <th>Client Name</th>
                 <th>Location</th>
+                <th>Created By</th>
                 <th>Assigned To</th>
                 <th>Order Date</th>
                 <th>Status</th>
@@ -254,13 +255,23 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <tbody>
             <?php foreach ($workorders as $wo): ?>
                 <tr>
-                    <td><?php echo (int)$wo['id']; ?></td>
+                    <td><?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['client_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['location'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td>
                         <?php
+                            $createdName = trim((($wo['creator_firstname'] ?? '') . ' ' . ($wo['creator_lastname'] ?? '')));
+                            echo htmlspecialchars($createdName !== '' ? $createdName : 'Unknown', ENT_QUOTES, 'UTF-8');
+                        ?>
+                    </td>
+                    <td>
+                        <?php
                             $assignedName = trim((($wo['assignee_firstname'] ?? '') . ' ' . ($wo['assignee_lastname'] ?? '')));
-                            echo htmlspecialchars($assignedName !== '' ? $assignedName : 'Unassigned', ENT_QUOTES, 'UTF-8');
+                            $assignedRole = strtolower(trim((string)($wo['assignee_role'] ?? '')));
+                            if ($assignedName === '' || !($assignedRole === 'admin' || in_array($assignedRole, ['technician', 'staff', ''], true))) {
+                                $assignedName = 'Not Assigned';
+                            }
+                            echo htmlspecialchars($assignedName, ENT_QUOTES, 'UTF-8');
                         ?>
                     </td>
                     <td><?php echo htmlspecialchars($wo['order_date'], ENT_QUOTES, 'UTF-8'); ?></td>

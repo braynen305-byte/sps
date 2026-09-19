@@ -32,6 +32,42 @@ if ($adminName === '') {
 }
 
 $title = 'Admin Dashboard';
+
+$conn->exec("CREATE TABLE IF NOT EXISTS customer_service_requests (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT NOT NULL,
+    request_number VARCHAR(30) DEFAULT NULL,
+    service_type VARCHAR(100) NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    preferred_date DATE DEFAULT NULL,
+    customer_phone VARCHAR(30) DEFAULT NULL,
+    urgency VARCHAR(30) NOT NULL DEFAULT 'Normal',
+    equipment_details VARCHAR(255) DEFAULT NULL,
+    problem_summary VARCHAR(255) DEFAULT NULL,
+    description LONGTEXT NOT NULL,
+    special_instructions LONGTEXT DEFAULT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+    approved_workorder_id INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX(customer_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+try {
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS request_number VARCHAR(30) DEFAULT NULL");
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(30) DEFAULT NULL");
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS urgency VARCHAR(30) NOT NULL DEFAULT 'Normal'");
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS equipment_details VARCHAR(255) DEFAULT NULL");
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS problem_summary VARCHAR(255) DEFAULT NULL");
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS special_instructions LONGTEXT DEFAULT NULL");
+} catch (Exception $e) {
+    // ignore migration issues
+}
+
+$pendingServiceRequests = $conn->query(
+    "SELECT r.*, c.name AS customer_name, c.email AS customer_email FROM customer_service_requests r LEFT JOIN customers c ON c.id = r.customer_id WHERE LOWER(COALESCE(r.status, 'pending')) NOT IN ('accepted', 'rejected', 'closed') ORDER BY r.created_at DESC LIMIT 6"
+)->fetchAll(PDO::FETCH_ASSOC);
+
 require_once '../includes/header.php';
 ?>
 
@@ -112,6 +148,9 @@ require_once '../includes/header.php';
             <a href="/sps/pages/manage_staff.php">Manage Staff</a>
         </div>
         <div class="action-card info">
+            <a href="/sps/pages/manage_service_requests.php">Service Requests</a>
+        </div>
+        <div class="action-card info">
             <a href="/sps/pages/workorder_dashboard.php">Manage Work Orders</a>
         </div>
         <div class="action-card">
@@ -127,6 +166,49 @@ require_once '../includes/header.php';
             <a href="#">Support</a>
         </div>
     </div>
+</div>
+
+<div class="dashboard-container" style="margin-top: 18px;">
+    <h3>Pending Customer Requests</h3>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+        <strong style="font-size:14px; color:#1f2937;"><?php echo count($pendingServiceRequests); ?> waiting for review</strong>
+        <a href="/sps/pages/manage_service_requests.php" style="color:#007BFF; text-decoration:none; font-weight:700;">Review all requests</a>
+    </div>
+
+    <?php if (empty($pendingServiceRequests)): ?>
+        <p style="margin:0; color:#4b5563;">No customer requests are waiting for review.</p>
+    <?php else: ?>
+        <table style="width:100%; border-collapse:collapse; background:#fff;">
+            <thead>
+                <tr style="background:#f8fafc;">
+                    <th style="padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px;">Request #</th>
+                    <th style="padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px;">Customer</th>
+                    <th style="padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px;">Issue</th>
+                    <th style="padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($pendingServiceRequests as $pending): ?>
+                    <?php
+                        $requestLabel = trim((string)($pending['request_number'] ?? ''));
+                        if ($requestLabel === '') {
+                            $requestLabel = 'SR-' . str_pad((string)(int)$pending['id'], 5, '0', STR_PAD_LEFT);
+                        }
+                    ?>
+                    <tr style="border-bottom:1px solid #eef2f7;">
+                        <td style="padding:8px 10px; font-size:12px; font-weight:700; color:#0f172a;"><?php echo htmlspecialchars($requestLabel, ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td style="padding:8px 10px; font-size:12px; color:#334155;"><?php echo htmlspecialchars($pending['customer_name'] ?? 'Customer', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td style="padding:8px 10px; font-size:12px; color:#334155;"><?php echo htmlspecialchars(trim((string)($pending['problem_summary'] ?? $pending['description'] ?? 'Service request')), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td style="padding:8px 10px; font-size:12px;">
+                            <span style="display:inline-block; padding:4px 8px; border-radius:999px; background:rgba(59,130,246,0.12); color:#1d4ed8; font-weight:700;">
+                                <?php echo htmlspecialchars($pending['status'] ?? 'Pending', ENT_QUOTES, 'UTF-8'); ?>
+                            </span>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php endif; ?>
 </div>
 
 <?php require_once '../includes/footer.php'; ?>

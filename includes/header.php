@@ -21,24 +21,46 @@ if (session_status() === PHP_SESSION_NONE) {
 <body>
 
 <nav>
-        <ul>
-            <li><a href="/sps/home.php">Home</a></li>
+        <div class="nav-shell">
+            <ul class="nav-main-links">
+                <li><a href="/sps/home.php">Home</a></li>
+                <?php if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true): ?>
+                    <li>
+                        <?php
+                        $role = strtolower($_SESSION['role'] ?? '');
+                        $dashboardUrl = ($role === 'customer') ? '/sps/pages/customer_dashboard.php' : '/sps/pages/dashboard.php';
+                        ?>
+                        <a href="<?php echo $dashboardUrl; ?>">Dashboard</a>
+                    </li>
+                    <?php if ($role === 'customer'): ?>
+                        <li><a href="/sps/pages/customer_profile.php">Profile</a></li>
+                        <li><a href="/sps/pages/customer_support.php">Support</a></li>
+                    <?php endif; ?>
+                    <li><a href="/sps/logout.php">Logout</a></li>
+                <?php else: ?>
+                    <li><a href="/sps/index.php">Login</a></li>
+                    <li><a href="/sps/customer_login.php">Customer Portal</a></li>
+                <?php endif; ?>
+                <li><a href="/sps/pages/customer_support.php">Support</a></li>
+            </ul>
             <?php if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true): ?>
-                <li>
-                    <?php
-                    $role = strtolower($_SESSION['role'] ?? '');
-                    // always point dashboard link to the central dashboard page
-                    $dashboardUrl = '/sps/pages/dashboard.php';
-                    ?>
-                    <a href="<?php echo $dashboardUrl; ?>">Dashboard</a>
-                </li>
-                <li><a href="/sps/logout.php">Logout</a></li>
-            <?php else: ?>
-                <li><a href="/sps/index.php">Login</a></li>
+                <?php
+                    $welcomeName = $_SESSION['full_name'] ?? $_SESSION['customer_name'] ?? ($_SESSION['email'] ?? 'User');
+                    $profileHref = ($role ?? '') === 'customer' ? '/sps/pages/customer_profile.php' : '/sps/pages/profile.php';
+                ?>
+                <div class="nav-profile-menu">
+                    <button type="button" class="nav-profile-button" aria-expanded="false" aria-label="Open profile menu">
+                        <img src="/sps/images/profile-avatar.svg" alt="Profile" class="nav-user-avatar">
+                        <span class="nav-user-name"><?php echo htmlspecialchars($welcomeName, ENT_QUOTES, 'UTF-8'); ?></span>
+                    </button>
+                    <div class="nav-profile-dropdown">
+                        <a href="<?php echo $profileHref; ?>">Profile</a>
+                        <a href="/sps/pages/customer_support.php">Support</a>
+                        <a href="/sps/logout.php">Logout</a>
+                    </div>
+                </div>
             <?php endif; ?>
-            <li><a href=" ">Support</a></li>
-
-        </ul>
+        </div>
     </nav>
     <section class="hero">
             <img src="/sps/images/sportsmarine.jpg" alt="Employee Registration" class="hero-image">
