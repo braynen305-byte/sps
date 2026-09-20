@@ -309,12 +309,6 @@ $staff = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstn
                 <input type="text" name="vessel_vin">
             </div>
         </div>
-        <div class="form-row full">
-            <div class="form-group">
-                <label>Description of Work Completed and Materials Used</label>
-                <textarea name="work_description"></textarea>
-            </div>
-        </div>
     </div>
 
     <!-- Costs and Hours -->

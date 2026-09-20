@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'quick
                 $canQuickUpdate = true;
             }
             if ($canQuickUpdate) {
-                $allowed = ['status','work_description','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
+                $allowed = ['status','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
                 if (!$hasStatus) {
                     // remove status from allowed updates when column is missing
                     $allowed = array_values(array_filter($allowed, function($f){ return $f !== 'status'; }));
@@ -615,7 +615,6 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                                 <?php endforeach; ?>
                             </select></label><br>
                             <?php endif; ?>
-                            <label>Work Done / Notes:<br><textarea name="work_description" style="width:100%;min-height:100px;"><?php echo htmlspecialchars($wo['work_description'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea></label>
                             <label>Entry Date: <input type="date" name="entry_date"></label>
                             <label>Time Entered: <input type="time" name="time_entered"></label>
                             <label>Time Departed: <input type="time" name="time_departed"></label>

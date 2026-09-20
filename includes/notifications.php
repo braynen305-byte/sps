@@ -333,8 +333,9 @@ function notify_customer_workorder_update(PDO $conn, int $customerId, int $workO
 
     $channels = get_enabled_notification_channels($prefs);
     $results = [];
-    $subject = 'Work order update: #' . $workOrderId;
-    $message = 'Your work order #' . $workOrderId . ' has been updated. Current status: ' . $status . '. Log in to view the latest details.';
+    // Avoid putting status/work details in the email body; email is not a secure channel.
+    $subject = 'Update on your work order #' . $workOrderId;
+    $message = 'There has been an update on your work order #' . $workOrderId . '. Please log in to your account to view the latest details.';
     $link = '/sps/pages/customer_dashboard.php';
 
     foreach ($channels as $channel) {

@@ -44,8 +44,31 @@ SET w.priority = latest.new_value";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete') {
     $delId = (int)($_POST['workorder_id'] ?? 0);
     if ($delId) {
+        foreach (['workorder_edits', 'work_performed_entries', 'workorder_view_state'] as $relatedTable) {
+            try {
+                $conn->prepare("DELETE FROM {$relatedTable} WHERE workorder_id = ?")->execute([$delId]);
+            } catch (Exception $e) {
+                // ignore if table doesn't exist yet
+            }
+        }
         $delStmt = $conn->prepare('DELETE FROM workorders WHERE id = ?');
         $delStmt->execute([$delId]);
+    }
+    header('Location: /sps/pages/workorder_dashboard.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_delete_workorders'])) {
+    $selectedIds = array_filter(array_map('intval', explode(',', (string)($_POST['selected_ids'] ?? ''))));
+    foreach ($selectedIds as $delId) {
+        foreach (['workorder_edits', 'work_performed_entries', 'workorder_view_state'] as $relatedTable) {
+            try {
+                $conn->prepare("DELETE FROM {$relatedTable} WHERE workorder_id = ?")->execute([$delId]);
+            } catch (Exception $e) {
+                // ignore if table doesn't exist yet
+            }
+        }
+        $conn->prepare('DELETE FROM workorders WHERE id = ?')->execute([$delId]);
     }
     header('Location: /sps/pages/workorder_dashboard.php');
     exit;
@@ -149,13 +172,17 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         color: white;
     }
     .workorder-table th {
-        padding: 12px;
+        padding: 6px 8px;
         text-align: left;
         font-weight: bold;
+        font-size: 12px;
+        line-height: 1.2;
     }
     .workorder-table td {
-        padding: 12px;
+        padding: 4px 8px;
         border-bottom: 1px solid #ddd;
+        font-size: 12px;
+        line-height: 1.2;
     }
     .workorder-table tbody tr:hover {
         background-color: #f5f5f5;
@@ -209,6 +236,31 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         color: #666;
         font-size: 16px;
     }
+    .bulk-actions-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 10px;
+        background: #f8fafc;
+        border: 1px solid #e5e7eb;
+        border-bottom: none;
+        border-radius: 5px 5px 0 0;
+    }
+    .bulk-delete-btn {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 14px;
+        background: linear-gradient(135deg, #f87171, #dc2626);
+        color: #fff;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 11px;
+        box-shadow: 0 2px 8px rgba(220,38,38,0.15);
+    }
 </style>
 
 <div class="dashboard-header">
@@ -238,9 +290,19 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <a href="/sps/pages/create_workorder.php" class="create-btn">Create your first work order</a>
     </div>
 <?php else: ?>
+    <form id="bulk-delete-form" method="post" action="/sps/pages/workorder_dashboard.php" onsubmit="return confirm('Delete the selected work orders? This cannot be undone.');">
+        <input type="hidden" id="selected_ids" name="selected_ids" value="">
+        <div class="bulk-actions-bar">
+            <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#334155; margin:0;">
+                <input type="checkbox" id="select-all-workorders" style="accent-color:#dc2626; width:14px; height:14px;">
+                Select all
+            </label>
+            <button id="bulk-delete-button" type="submit" name="bulk_delete_workorders" value="1" class="bulk-delete-btn">Delete Selected</button>
+        </div>
     <table class="workorder-table">
         <thead>
             <tr>
+                <th style="width:30px;">Sel</th>
                 <th>WO#</th>
                 <th>Client Name</th>
                 <th>Location</th>
@@ -255,6 +317,7 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <tbody>
             <?php foreach ($workorders as $wo): ?>
                 <tr>
+                    <td><input type="checkbox" name="selected_workorders[]" value="<?php echo (int)$wo['id']; ?>" class="workorder-select-checkbox" style="accent-color:#dc2626; width:14px; height:14px;"></td>
                     <td><?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['client_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['location'], ENT_QUOTES, 'UTF-8'); ?></td>
@@ -297,17 +360,70 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <div class="action-links">
                             <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>" class="view-link">View</a>
                             <a href="/sps/pages/edit_workorder.php?id=<?php echo (int)$wo['id']; ?>" class="edit-link">Edit</a>
-                            <form method="post" style="display:inline;">
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="workorder_id" value="<?php echo (int)$wo['id']; ?>">
-                                <button type="submit" class="delete-btn" onclick="return confirm('Delete this work order?');">Delete</button>
-                            </form>
+                            <button type="button" class="delete-btn" onclick="submitSingleDelete(<?php echo (int)$wo['id']; ?>)">Delete</button>
                         </div>
                     </td>
                 </tr>
             <?php endforeach; ?>
         </tbody>
     </table>
+    </form>
 <?php endif; ?>
+
+<form id="single-delete-form" method="post" action="/sps/pages/workorder_dashboard.php" style="display:none;">
+    <input type="hidden" name="action" value="delete">
+    <input type="hidden" id="single-delete-id" name="workorder_id" value="">
+</form>
+
+<script>
+function submitSingleDelete(id) {
+    if (confirm('Delete this work order?')) {
+        document.getElementById('single-delete-id').value = id;
+        document.getElementById('single-delete-form').submit();
+    }
+}
+(function () {
+    var selectAll = document.getElementById('select-all-workorders');
+    var bulkDeleteButton = document.getElementById('bulk-delete-button');
+    var bulkDeleteForm = document.getElementById('bulk-delete-form');
+    var selectedIdsInput = document.getElementById('selected_ids');
+
+    function updateBulkDeleteButton() {
+        var checkboxes = document.querySelectorAll('.workorder-select-checkbox');
+        var selectedIds = [];
+        checkboxes.forEach(function (checkbox) {
+            if (checkbox.checked) { selectedIds.push(checkbox.value); }
+        });
+        if (selectedIdsInput) { selectedIdsInput.value = selectedIds.join(','); }
+        if (bulkDeleteButton) { bulkDeleteButton.style.display = selectedIds.length ? 'inline-flex' : 'none'; }
+    }
+
+    if (bulkDeleteForm) {
+        bulkDeleteForm.addEventListener('submit', function (event) {
+            var selectedIds = [];
+            document.querySelectorAll('.workorder-select-checkbox').forEach(function (checkbox) {
+                if (checkbox.checked) { selectedIds.push(checkbox.value); }
+            });
+            if (!selectedIds.length) { event.preventDefault(); return false; }
+            if (selectedIdsInput) { selectedIdsInput.value = selectedIds.join(','); }
+        });
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function () {
+            document.querySelectorAll('.workorder-select-checkbox').forEach(function (checkbox) {
+                checkbox.checked = selectAll.checked;
+            });
+            updateBulkDeleteButton();
+        });
+    }
+
+    document.querySelectorAll('.workorder-select-checkbox').forEach(function (checkbox) {
+        checkbox.addEventListener('change', updateBulkDeleteButton);
+    });
+
+    updateBulkDeleteButton();
+})();
+</script>
 
 <?php require_once '../includes/footer.php'; ?>

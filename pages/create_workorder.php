@@ -509,12 +509,6 @@ document.addEventListener('DOMContentLoaded', function () {
             <?php endif; ?>
         </div>
         <?php if ($currentRole !== 'office'): ?>
-        <div class="form-row full">
-            <div class="form-group">
-                <label>Description of Work Completed and Materials Used</label>
-                <textarea name="work_description"></textarea>
-            </div>
-        </div>
         <?php endif; ?>
     </div>
 

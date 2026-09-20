@@ -6,6 +6,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolo
 }
 
 require_once '../includes/dbh.inc.php';
+require_once '../includes/notifications.php';
 
 $customerId = (int)($_SESSION['customer_id'] ?? 0);
 $customerName = $_SESSION['customer_name'] ?? 'Customer';
@@ -73,6 +74,39 @@ if (!in_array($workorderLimit, [10, 50, 100], true)) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['request_halt'])) {
+        $haltId = (int)$_POST['request_halt'];
+        if ($haltId > 0) {
+            $woStmt = $conn->prepare('SELECT id, status, order_number FROM workorders WHERE id = ? AND customer_id = ? LIMIT 1');
+            $woStmt->execute([$haltId, $customerId]);
+            $targetWo = $woStmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($targetWo) {
+                $currentStatus = strtolower(trim((string)($targetWo['status'] ?? '')));
+                if (!in_array($currentStatus, ['on hold', 'completed', 'closed'], true)) {
+                    $oldStatus = $targetWo['status'] ?? '';
+                    $upd = $conn->prepare('UPDATE workorders SET status = ? WHERE id = ?');
+                    $upd->execute(['On Hold', $haltId]);
+
+                    $ins = $conn->prepare('INSERT INTO workorder_edits (workorder_id, field_name, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)');
+                    $ins->execute([$haltId, 'status', $oldStatus, 'On Hold', null]);
+
+                    $orderLabel = !empty($targetWo['order_number']) ? $targetWo['order_number'] : 'WO' . str_pad((string)$haltId, 4, '0', STR_PAD_LEFT);
+                    notify_staff_roles(
+                        $conn,
+                        ['admin', 'office'],
+                        'customer_halt_request',
+                        'Customer requested a pause on work order: ' . $orderLabel,
+                        'The customer has requested that work be paused on work order ' . $orderLabel . '. Its status has been set to On Hold.',
+                        '/sps/pages/view_workorder.php?id=' . $haltId
+                    );
+                }
+            }
+        }
+        header('Location: /sps/pages/customer_dashboard.php?halt_requested=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+        exit;
+    }
+
     if (isset($_POST['delete_request'])) {
         $deleteId = (int)$_POST['delete_request'];
         if ($deleteId > 0) {
@@ -136,7 +170,7 @@ $workOrders->execute([
 ]);
 $workOrders = $workOrders->fetchAll(PDO::FETCH_ASSOC);
 
-$serviceRequests = $conn->prepare('SELECT r.*, w.id AS linked_workorder_id, w.status AS linked_workorder_status FROM customer_service_requests r LEFT JOIN workorders w ON w.id = r.approved_workorder_id WHERE r.customer_id = :customer_id ORDER BY r.created_at DESC LIMIT ' . (int)$requestLimit);
+$serviceRequests = $conn->prepare('SELECT r.*, w.id AS linked_workorder_id, w.status AS linked_workorder_status, w.order_number AS linked_workorder_number FROM customer_service_requests r LEFT JOIN workorders w ON w.id = r.approved_workorder_id WHERE r.customer_id = :customer_id ORDER BY r.created_at DESC LIMIT ' . (int)$requestLimit);
 $serviceRequests->execute([
     ':customer_id' => $customerId,
 ]);
@@ -205,6 +239,11 @@ foreach ($workOrders as $wo) {
             The request was removed successfully.
         </div>
     <?php endif; ?>
+    <?php if (isset($_GET['halt_requested']) && $_GET['halt_requested'] == '1'): ?>
+        <div style="background:#fff7ed; color:#92400e; border:1px solid #fdba74; border-radius:8px; padding:12px 16px; margin-bottom:18px; font-weight:700;">
+            Your request to pause this job was sent. The work order has been set to On Hold and our team has been notified.
+        </div>
+    <?php endif; ?>
 
     <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 10px rgba(0,0,0,0.04); overflow:hidden; margin-bottom:24px;">
         <div style="background:#0f766e; color:#fff; padding:8px 12px; font-weight:700; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap; min-height:42px;">
@@ -263,7 +302,7 @@ foreach ($workOrders as $wo) {
                                             <span style="color:#94a3b8; font-size:11px;">—</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td style="padding:4px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2;"><?php echo htmlspecialchars($requestNumber, ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:4px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2;"><a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"><?php echo htmlspecialchars($requestNumber, ENT_QUOTES, 'UTF-8'); ?></a></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['service_type'] ?? 'Service', ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['preferred_date'] ?? 'Not set', ENT_QUOTES, 'UTF-8'); ?></td>
@@ -280,11 +319,12 @@ foreach ($workOrders as $wo) {
                                         </span>
                                         <?php if (!empty($request['linked_workorder_id'])): ?>
                                             <div style="margin-top:6px;">
-                                                <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['linked_workorder_id']; ?>" style="font-size:12px; color:#007BFF; text-decoration:none; font-weight:700;">View work order</a>
+                                                <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['linked_workorder_id']; ?>" style="font-size:12px; color:#007BFF; text-decoration:none; font-weight:700;">View work order #<?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['linked_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
                                             </div>
                                         <?php endif; ?>
                                     </td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1; vertical-align:middle;">
+                                        <a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 8px; background:#e0f2fe; color:#0f172a; text-decoration:none; border-radius:7px; font-weight:700; font-size:11px; border:1px solid #bae6fd; vertical-align:middle; margin-right:6px;">View</a>
                                         <?php if (empty($request['linked_workorder_id']) && strtolower((string)($request['status'] ?? 'Pending')) !== 'accepted'): ?>
                                             <form method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Delete this request? This cannot be undone.');" style="display:inline-block; margin:0; line-height:1; vertical-align:middle;">
                                                 <input type="hidden" name="delete_request" value="<?php echo (int)$request['id']; ?>">
@@ -336,6 +376,7 @@ foreach ($workOrders as $wo) {
             <?php if (empty($workOrders)): ?>
                 <div style="padding:20px; color:#4b5563;">You do not have any work orders assigned yet.</div>
             <?php else: ?>
+                <div style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse;">
                     <thead>
                         <tr style="background:#f8fafc;">
@@ -344,7 +385,7 @@ foreach ($workOrders as $wo) {
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Status</th>
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Date</th>
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Location</th>
-                            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Action</th>
+                            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2; min-width:150px;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -354,16 +395,12 @@ foreach ($workOrders as $wo) {
                                 if ($woIssue === '') {
                                     $woIssue = 'No issue details provided';
                                 }
-                                $woIssuePreview = mb_substr($woIssue, 0, 90, 'UTF-8');
-                                if (mb_strlen($woIssue, 'UTF-8') > 90) {
-                                    $woIssuePreview .= '...';
-                                }
                             ?>
                             <?php $workOrderRowBg = ((int)$wo['id'] % 2 === 0) ? '#f8fafc' : '#ffffff'; ?>
                             <tr style="border-bottom:1px solid #e5e7eb; background:<?php echo $workOrderRowBg; ?>;">
                                 <td style="padding:4px 8px; font-size:12px; line-height:1.2;">#<?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td style="padding:4px 8px; max-width:260px; color:#374151; font-size:12px; line-height:1.2;">
-                                    <?php echo htmlspecialchars($woIssuePreview, ENT_QUOTES, 'UTF-8'); ?>
+                                <td style="padding:4px 8px; max-width:220px; color:#374151; font-size:12px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?php echo htmlspecialchars($woIssue, ENT_QUOTES, 'UTF-8'); ?>">
+                                    <?php echo htmlspecialchars($woIssue, ENT_QUOTES, 'UTF-8'); ?>
                                 </td>
                                 <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
                                     <?php
@@ -380,11 +417,20 @@ foreach ($workOrders as $wo) {
                                 </td>
                                 <td style="padding:4px 8px; font-size:12px; line-height:1.2;"><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                                 <td style="padding:4px 8px; font-size:12px; line-height:1.2;"><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td style="padding:4px 8px; font-size:12px; line-height:1.2;"><a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>" style="display:inline-flex; align-items:center; justify-content:center; height:28px; padding:0 10px; background:#e0f2fe; color:#0f172a; text-decoration:none; border-radius:8px; font-weight:700; font-size:12px; border:1px solid #bae6fd;">View</a></td>
+                                <td style="padding:4px 8px; font-size:12px; line-height:1.2; white-space:nowrap;">
+                                    <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>" style="display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 8px; background:#e0f2fe; color:#0f172a; text-decoration:none; border-radius:7px; font-weight:700; font-size:11px; border:1px solid #bae6fd; margin-right:4px;">View</a>
+                                    <?php if (!in_array($woStatus, ['on hold', 'completed', 'closed'], true)): ?>
+                                        <form method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Request to pause this job? Our team will be notified.');" style="display:inline-block; margin:0;">
+                                            <input type="hidden" name="request_halt" value="<?php echo (int)$wo['id']; ?>">
+                                            <button type="submit" title="Request to pause this job" aria-label="Request to pause this job" style="display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; background:#fff7ed; color:#92400e; border:1px solid #fdba74; border-radius:7px; font-size:12px; cursor:pointer;">⏸</button>
+                                        </form>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                </div>
             <?php endif; ?>
         </div>
     </div>

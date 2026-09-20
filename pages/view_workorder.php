@@ -1,6 +1,36 @@
 <?php
 session_start();
 
+function format_work_duration($time) {
+    $parts = explode(':', (string)$time);
+    $hours = (int)($parts[0] ?? 0);
+    $minutes = (int)($parts[1] ?? 0);
+    return $hours . 'h ' . sprintf('%02d', $minutes) . 'm';
+}
+
+function format_entry_logged_at($timestamp) {
+    $ts = strtotime((string)$timestamp);
+    return $ts ? date('M j, Y \a\t g:ia', $ts) : '';
+}
+
+function format_entry_day($dateValue) {
+    $ts = strtotime((string)$dateValue);
+    return $ts ? date('M j, Y', $ts) : (string)$dateValue;
+}
+
+function format_duration_words($hours, $minutes) {
+    $hours = (int)$hours;
+    $minutes = (int)$minutes;
+    $parts = [];
+    if ($hours > 0) {
+        $parts[] = $hours . ' ' . ($hours === 1 ? 'hour' : 'hours');
+    }
+    if ($minutes > 0 || empty($parts)) {
+        $parts[] = $minutes . ' ' . ($minutes === 1 ? 'minute' : 'minutes');
+    }
+    return implode(' ', $parts);
+}
+
 function formatHistoryEventText($fieldName, $oldValue, $newValue) {
     $field = trim((string)($fieldName ?? ''));
     $oldText = trim((string)($oldValue ?? ''));
@@ -31,6 +61,12 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
 }
 
 require_once '../includes/dbh.inc.php';
+
+try {
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS created_via VARCHAR(30) DEFAULT NULL");
+} catch (Exception $e) {
+    // ignore if column already exists
+}
 
 $conn->exec("CREATE TABLE IF NOT EXISTS work_performed_entries (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -134,15 +170,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $currentRole === 'technician') {
 
         if ($techAction === 'add_work_performed') {
             $performedDate = trim((string)($_POST['performed_date'] ?? ''));
-            $performedTime = trim((string)($_POST['performed_time'] ?? ''));
+            $performedHours = max(0, min(99, (int)($_POST['performed_hours'] ?? 0)));
+            $performedMinutes = max(0, min(59, (int)($_POST['performed_minutes'] ?? 0)));
+            $performedTime = sprintf('%02d:%02d:00', $performedHours, $performedMinutes);
             $description = trim((string)($_POST['performed_description'] ?? ''));
 
-            if ($performedDate !== '' && $performedTime !== '' && $description !== '') {
+            if ($performedDate !== '' && ($performedHours > 0 || $performedMinutes > 0) && $description !== '') {
                 $insertEntry = $conn->prepare('INSERT INTO work_performed_entries (workorder_id, performed_date, performed_time, description, added_by) VALUES (?, ?, ?, ?, ?)');
                 $insertEntry->execute([$id, $performedDate, $performedTime, $description, $userId]);
                 $techActionMessage = 'Work performed entry added successfully.';
             } else {
-                $techActionMessage = 'Please enter a date, time, and description for the work performed entry.';
+                $techActionMessage = 'Please enter a date, time spent, and description for the work performed entry.';
             }
         } elseif ($techAction === 'opt_out') {
             $oldValue = $wo['work_performed_by'];
@@ -171,9 +209,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $currentRole === 'technician') {
 }
 
 $techs = $conn->query('SELECT id, firstname, lastname FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
-$workPerformedEntries = $conn->prepare('SELECT wpe.*, s.firstname, s.lastname FROM work_performed_entries wpe LEFT JOIN staff s ON s.id = wpe.added_by WHERE wpe.workorder_id = ? ORDER BY wpe.performed_date DESC, wpe.performed_time DESC');
+$workPerformedEntries = $conn->prepare('SELECT wpe.*, s.firstname, s.lastname FROM work_performed_entries wpe LEFT JOIN staff s ON s.id = wpe.added_by WHERE wpe.workorder_id = ? ORDER BY wpe.performed_date DESC, wpe.created_at DESC');
 $workPerformedEntries->execute([$id]);
 $workPerformedEntries = $workPerformedEntries->fetchAll(PDO::FETCH_ASSOC);
+
+$workPerformedEntriesByDate = [];
+foreach ($workPerformedEntries as $entry) {
+    $dateKey = $entry['performed_date'] ?? '';
+    $workPerformedEntriesByDate[$dateKey][] = $entry;
+}
+
+// track which work-performed entry the customer has already seen, so "NEW" only shows once
+$mostRecentEntryId = $workPerformedEntries[0]['id'] ?? null;
+$showNewBadge = ($mostRecentEntryId !== null);
+if ($currentRole === 'customer') {
+    $conn->exec("CREATE TABLE IF NOT EXISTS workorder_view_state (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        workorder_id INT NOT NULL,
+        last_seen_entry_id INT DEFAULT NULL,
+        viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY customer_workorder (customer_id, workorder_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $customerId = (int)($_SESSION['customer_id'] ?? 0);
+    if ($customerId > 0) {
+        $viewStmt = $conn->prepare('SELECT last_seen_entry_id FROM workorder_view_state WHERE customer_id = ? AND workorder_id = ? LIMIT 1');
+        $viewStmt->execute([$customerId, $id]);
+        $viewRow = $viewStmt->fetch(PDO::FETCH_ASSOC);
+        $lastSeenEntryId = $viewRow ? (int)$viewRow['last_seen_entry_id'] : null;
+
+        $showNewBadge = ($mostRecentEntryId !== null) && ($lastSeenEntryId === null || (int)$mostRecentEntryId > $lastSeenEntryId);
+
+        if ($mostRecentEntryId !== null) {
+            $upsert = $conn->prepare('INSERT INTO workorder_view_state (customer_id, workorder_id, last_seen_entry_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE last_seen_entry_id = VALUES(last_seen_entry_id), viewed_at = CURRENT_TIMESTAMP');
+            $upsert->execute([$customerId, $id, $mostRecentEntryId]);
+        }
+    }
+}
 
 $totalWorkSeconds = 0;
 foreach ($workPerformedEntries as $entry) {
@@ -186,27 +259,33 @@ foreach ($workPerformedEntries as $entry) {
 }
 $totalWorkHours = intdiv($totalWorkSeconds, 3600);
 $totalWorkMinutes = intdiv($totalWorkSeconds % 3600, 60);
-$totalWorkText = sprintf('%02d:%02d', $totalWorkHours, $totalWorkMinutes);
+$totalWorkText = format_duration_words($totalWorkHours, $totalWorkMinutes);
 
 $title = 'View Work Order';
 require_once '../includes/header.php';
 ?>
 
 <style>
-    .wo-card { max-width: 960px; margin: 64px auto 24px; padding: 18px 18px 30px; border-radius: 8px; background: #fff; box-shadow: 0 1px 12px rgba(0,0,0,0.06); font-family: Arial, sans-serif; box-sizing: border-box; }
-    .wo-card h2 { margin-top: 0; background: #007BFF; color: #fff; padding: 10px 14px; border-radius: 6px; }
-    .wo-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    .wo-table td { padding: 12px; vertical-align: top; }
-    .wo-table tbody tr:nth-child(odd) td { background: #f5f5f5; }
-    .wo-table tbody tr:nth-child(even) td { background: #efefef; }
-    .wo-meta { width: 240px; font-weight: 700; color: #333; padding-right: 8px; }
-    .edit-link { background-color: #007BFF; color: white; padding:6px 10px; border-radius:4px; text-decoration:none; }
-    .view-link { background-color: #17a2b8; color: white; padding:6px 10px; border-radius:4px; text-decoration:none; }
+    :root { --sps-primary:#2563eb; --sps-primary-dark:#1d4ed8; }
+    .wo-card { max-width: 1200px; margin: 48px auto 24px; padding: 22px 26px 32px; border-radius: 14px; background: #fff; box-shadow: 0 4px 24px rgba(15,23,42,0.08); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-sizing: border-box; }
+    .wo-header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; background:rgba(15,23,42,0.85); border:1px solid rgba(15,23,42,0.9); color:#fff; padding:10px 14px; border-radius:8px; margin-bottom:16px; }
+    .wo-header h2 { margin:0; font-size:15px; font-weight:700; letter-spacing:.02em; color:#fff; }
+    .wo-actions a { color:#1d4ed8; background:#fff; border:1px solid #cbd5e1; padding:6px 12px; border-radius:8px; text-decoration:none; font-weight:600; font-size:12px; margin-left:8px; transition: background .15s ease; }
+    .wo-actions a:hover { background:#eff6ff; }
+    .wo-actions a.edit-link { color:#fff; background:#2563eb; border-color:#2563eb; }
+    .wo-actions a.edit-link:hover { background:#1d4ed8; }
+    .wo-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:14px; margin-top:6px; }
+    .wo-field { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; box-sizing:border-box; }
+    .wo-field.full { grid-column: 1 / -1; }
+    .wo-field .wo-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#64748b; margin-bottom:6px; }
+    .wo-field .wo-value { font-size:14px; color:#0f172a; line-height:1.5; word-break:break-word; }
+    .edit-link { background-color: #2563eb; color: white; padding:8px 14px; border-radius:8px; text-decoration:none; font-weight:600; font-size:13px; }
+    .view-link { background-color: #0891b2; color: white; padding:8px 14px; border-radius:8px; text-decoration:none; font-weight:600; font-size:13px; }
     .history-toggle-container { display:flex; justify-content:flex-end; width:100%; margin-top:6px; }
-    .history-button-row { display:flex; justify-content:flex-end; align-items:center; width:100%; max-width:960px; margin:12px auto 8px; position:relative; }
-    .history-toggle-btn { width:100%; max-width:960px; text-align:center; display:block; }
-    .small-toggle-btn { background: transparent; color: #007BFF; border: 1px solid #007BFF; padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; transition: all .15s ease; }
-    .small-toggle-btn:hover { background: #007BFF; color: #fff; }
+    .history-button-row { display:flex; justify-content:flex-end; align-items:center; width:100%; max-width:1200px; margin:12px auto 8px; position:relative; }
+    .history-toggle-btn { width:100%; max-width:1200px; text-align:center; display:block; }
+    .small-toggle-btn { background: transparent; color: #2563eb; border: 1px solid #2563eb; padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; transition: all .15s ease; }
+    .small-toggle-btn:hover { background: #2563eb; color: #fff; }
     .history-table,
     .history-table th,
     .history-table td,
@@ -220,7 +299,7 @@ require_once '../includes/header.php';
     #tech-history-body table th,
     #tech-history-body table td {
         width: 100%;
-        max-width: 960px;
+        max-width: 1200px;
         border-collapse: collapse;
         text-align: center;
         table-layout: fixed;
@@ -258,11 +337,15 @@ require_once '../includes/header.php';
 </style>
 
 <div class="wo-card">
-<h2>Work Order # <?php echo htmlspecialchars($displayOrderNumber, ENT_QUOTES, 'UTF-8'); ?></h2>
-<p><a href="/sps/pages/dashboard.php">← Back to Dashboard</a>
-<?php if (in_array($currentRole, ['admin','office','technician'])): ?>
-    | <a class="edit-link" href="/sps/pages/edit_workorder.php?id=<?php echo (int)$wo['id']; ?>">Edit</a>
-<?php endif; ?></p>
+<div class="wo-header">
+    <h2>Work Order # <?php echo htmlspecialchars($displayOrderNumber, ENT_QUOTES, 'UTF-8'); ?></h2>
+    <div class="wo-actions">
+        <a href="/sps/pages/dashboard.php">← Back to Dashboard</a>
+        <?php if (in_array($currentRole, ['admin','office','technician'])): ?>
+            <a class="edit-link" href="/sps/pages/edit_workorder.php?id=<?php echo (int)$wo['id']; ?>">Edit</a>
+        <?php endif; ?>
+    </div>
+</div>
 
 <?php if ($techActionMessage !== ''): ?>
     <p style="color:#0b5a2c; font-weight:600; margin:10px 0;"><?php echo htmlspecialchars($techActionMessage, ENT_QUOTES, 'UTF-8'); ?></p>
@@ -296,7 +379,12 @@ require_once '../includes/header.php';
             <input type="hidden" name="tech_action" value="add_work_performed">
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <label style="flex:1; min-width:160px; font-weight:700;">Date<br><input type="date" name="performed_date" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
-                <label style="flex:1; min-width:160px; font-weight:700;">Time Spent<br><input type="time" name="performed_time" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;" step="900"></label>
+                <label style="flex:1; min-width:160px; font-weight:700;">Time Spent<br>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <input type="number" name="performed_hours" min="0" max="99" value="0" required style="width:70px; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"> <span>hrs</span>
+                        <input type="number" name="performed_minutes" min="0" max="59" step="5" value="0" required style="width:70px; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"> <span>min</span>
+                    </div>
+                </label>
             </div>
             <label style="font-weight:700;">Description<br><textarea name="performed_description" rows="4" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px; resize:vertical;"></textarea></label>
             <button type="submit" class="edit-link" style="border:none; cursor:pointer; width:max-content;">Save Work Performed</button>
@@ -327,41 +415,73 @@ try {
 }
 
 ?>
-<table class="wo-table" style="width:100%;">
-    <tbody>
-    <tr><th class="wo-meta">Assigned To</th><td><?php echo htmlspecialchars($assignedTechDisplay, ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Client Name</th><td><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Client Phone</th><td><?php echo htmlspecialchars($wo['client_phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Location</th><td><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Order Date</th><td><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Status</th><td><?php $rawStatus = isset($wo['status']) ? (string)$wo['status'] : 'Open'; $statusClass = strtolower(trim($rawStatus)); $statusStyle = 'display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;color:#fff;'; if ($statusClass === 'completed' || $statusClass === 'closed') { $statusStyle .= 'background:#198754;'; } elseif ($statusClass === 'waiting for parts') { $statusStyle .= 'background:#d97706;'; } elseif ($statusClass === 'on hold') { $statusStyle .= 'background:#7c3aed;'; } elseif ($statusClass === 'in progress') { $statusStyle .= 'background:#2563eb;'; } elseif ($statusClass === 'pending') { $statusStyle .= 'background:#6b7280;'; } elseif ($statusClass === 'open') { $statusStyle .= 'background:#0ea5e9;'; } else { $statusStyle .= 'background:#1d4ed8;'; } echo '<span style="' . htmlspecialchars($statusStyle, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($rawStatus, ENT_QUOTES, 'UTF-8') . '</span>'; ?> <button type="button" id="status-guide-toggle" aria-label="Open status guide" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:1px solid #cbd5e1; border-radius:50%; background:#eff6ff; color:#1d4ed8; cursor:pointer; font-size:12px; line-height:1; font-weight:700; padding:0; vertical-align:middle;">ⓘ</button></td></tr>
-    <tr><th class="wo-meta">Priority</th><td><?php $rawPriority = isset($wo['priority']) ? (string)$wo['priority'] : 'Normal'; $isHigh = (strtolower(trim($rawPriority)) === 'high'); ?><span style="<?php echo $isHigh ? 'color:#721c24;background:#f8d7da;padding:4px 8px;border-radius:4px;' : ''; ?>"><?php echo htmlspecialchars($rawPriority, ENT_QUOTES, 'UTF-8'); ?></span></td></tr>
-    <tr><th class="wo-meta">Expected Start</th><td><?php echo htmlspecialchars(!empty($wo['expected_start_date']) ? $wo['expected_start_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Expected End</th><td><?php echo htmlspecialchars(!empty($wo['expected_end_date']) ? $wo['expected_end_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Requested Work</th><td><?php echo nl2br(htmlspecialchars($wo['requested_work'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td></tr>
-    <tr><th class="wo-meta">Additional Comments</th><td><?php echo nl2br(htmlspecialchars($wo['additional_comments'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td></tr>
-    <tr><th class="wo-meta">Vessel VIN</th><td><?php echo htmlspecialchars($wo['vessel_vin'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Vessel Hours</th><td><?php echo htmlspecialchars($wo['vessel_hours'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Labor Time</th><td><?php echo htmlspecialchars($wo['labor_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Parts/Materials Cost</th><td><?php echo htmlspecialchars($wo['parts_cost'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Chargeable To</th><td><?php echo htmlspecialchars($wo['chargeable_to'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Created By</th><td><?php echo htmlspecialchars((($wo['received_first'] ?? '') ? ($wo['received_first'].' '.($wo['received_last'] ?? '')) : 'Unknown'), ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Permission Anytime</th><td><?php echo $wo['permission_anytime'] ? 'Yes' : 'No'; ?></td></tr>
-    <tr><th class="wo-meta">Permission Date/Time</th><td><?php echo htmlspecialchars($wo['permission_date'] ?? '', ENT_QUOTES, 'UTF-8') . ' ' . htmlspecialchars($wo['permission_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Entry Date / Time Entered / Departed</th><td><?php echo htmlspecialchars($wo['entry_date'] ?? '', ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($wo['time_entered'] ?? '', ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($wo['time_departed'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Work Description</th><td><?php echo nl2br(htmlspecialchars($wo['work_description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td></tr>
-    <tr><th class="wo-meta">Created At</th><td><?php echo htmlspecialchars($wo['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td></tr>
-    <tr><th class="wo-meta">Last Updated</th><td><?php
+<?php $fieldColors = ['#eff6ff', '#f0fdf4', '#fef9c3', '#fdf2f8', '#f5f3ff', '#ecfeff', '#fff7ed', '#f1f5f9']; $fieldIdx = 0; ?>
+<div class="wo-grid">
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Assigned To</div><div class="wo-value"><?php echo htmlspecialchars($assignedTechDisplay, ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Client Name</div><div class="wo-value"><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Client Phone</div><div class="wo-value"><?php echo htmlspecialchars($wo['client_phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Location</div><div class="wo-value"><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Order Date</div><div class="wo-value"><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Status</div><div class="wo-value"><?php $rawStatus = isset($wo['status']) ? (string)$wo['status'] : 'Open'; $statusClass = strtolower(trim($rawStatus)); $statusStyle = 'display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;color:#fff;'; if ($statusClass === 'completed' || $statusClass === 'closed') { $statusStyle .= 'background:#198754;'; } elseif ($statusClass === 'waiting for parts') { $statusStyle .= 'background:#d97706;'; } elseif ($statusClass === 'on hold') { $statusStyle .= 'background:#7c3aed;'; } elseif ($statusClass === 'in progress') { $statusStyle .= 'background:#2563eb;'; } elseif ($statusClass === 'pending') { $statusStyle .= 'background:#6b7280;'; } elseif ($statusClass === 'open') { $statusStyle .= 'background:#0ea5e9;'; } else { $statusStyle .= 'background:#1d4ed8;'; } echo '<span style="' . htmlspecialchars($statusStyle, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($rawStatus, ENT_QUOTES, 'UTF-8') . '</span>'; ?> <button type="button" id="status-guide-toggle" aria-label="Open status guide" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:1px solid #cbd5e1; border-radius:50%; background:#eff6ff; color:#1d4ed8; cursor:pointer; font-size:12px; line-height:1; font-weight:700; padding:0; vertical-align:middle;">ⓘ</button></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Priority</div><div class="wo-value"><?php $rawPriority = isset($wo['priority']) ? (string)$wo['priority'] : 'Normal'; $isHigh = (strtolower(trim($rawPriority)) === 'high'); ?><span style="<?php echo $isHigh ? 'color:#721c24;background:#f8d7da;padding:4px 8px;border-radius:4px;' : ''; ?>"><?php echo htmlspecialchars($rawPriority, ENT_QUOTES, 'UTF-8'); ?></span></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Expected Start</div><div class="wo-value"><?php echo htmlspecialchars(!empty($wo['expected_start_date']) ? $wo['expected_start_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Expected End</div><div class="wo-value"><?php echo htmlspecialchars(!empty($wo['expected_end_date']) ? $wo['expected_end_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Requested Work</div><div class="wo-value"><?php echo nl2br(htmlspecialchars($wo['requested_work'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div></div>
+    <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Additional Comments</div><div class="wo-value"><?php echo nl2br(htmlspecialchars($wo['additional_comments'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Vessel VIN</div><div class="wo-value"><?php echo htmlspecialchars($wo['vessel_vin'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Vessel Hours</div><div class="wo-value"><?php echo htmlspecialchars($wo['vessel_hours'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Labor Time</div><div class="wo-value"><?php echo htmlspecialchars($wo['labor_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Parts/Materials Cost</div><div class="wo-value"><?php echo htmlspecialchars($wo['parts_cost'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Chargeable To</div><div class="wo-value"><?php echo htmlspecialchars($wo['chargeable_to'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Created By</div><div class="wo-value"><?php
+        if (($wo['created_via'] ?? '') === 'service_request') {
+            echo 'Automated (Customer Service Request)';
+        } else {
+            echo htmlspecialchars((($wo['received_first'] ?? '') ? ($wo['received_first'].' '.($wo['received_last'] ?? '')) : 'Unknown'), ENT_QUOTES, 'UTF-8');
+        }
+    ?></div></div>
+    <?php if (!empty($workPerformedEntries)): ?>
+    <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;">
+        <div class="wo-label">Work Performed <span style="background:#e8f5e9; color:#166534; font-weight:700; border-radius:999px; padding:4px 8px; font-size:11px; display:inline-block; margin-left:6px; text-transform:none; letter-spacing:normal;">Total: <?php echo htmlspecialchars($totalWorkText, ENT_QUOTES, 'UTF-8'); ?></span></div>
+        <div class="wo-value">
+            <?php $entryColors = ['#f8fbff', '#fffdf7']; $entryIndex = 0; ?>
+            <?php foreach ($workPerformedEntriesByDate as $dayKey => $dayEntries): ?>
+                <details open style="margin-bottom:12px;">
+                    <summary style="cursor:pointer; text-align:left; font-weight:700; color:#0f172a; padding:4px 0; border-bottom:2px solid #dfe7f1; margin-bottom:6px;"><?php echo htmlspecialchars(format_entry_day($dayKey), ENT_QUOTES, 'UTF-8'); ?></summary>
+                    <?php foreach ($dayEntries as $entry): ?>
+                        <details style="padding:8px 10px; margin-bottom:6px; border-radius:6px; background:<?php echo $entryColors[$entryIndex++ % count($entryColors)]; ?>;">
+                            <summary style="cursor:pointer; display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; font-size:13px; color:#475569;">
+                                <?php if ($showNewBadge && isset($entry['id']) && $entry['id'] == $mostRecentEntryId): ?>
+                                    <span title="Most recent update" style="background:#dc2626; color:#fff; font-size:10px; font-weight:700; border-radius:999px; padding:2px 7px; letter-spacing:.03em;">NEW</span>
+                                <?php endif; ?>
+                                <span><?php echo htmlspecialchars(format_entry_logged_at($entry['created_at'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></span>
+                                <span>&middot;</span>
+                                <span style="font-weight:600;"><?php echo htmlspecialchars(format_work_duration($entry['performed_time'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></span>
+                                <span>&middot;</span>
+                                <span>Technician: <?php echo htmlspecialchars(trim((($entry['firstname'] ?? '') . ' ' . ($entry['lastname'] ?? ''))) ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></span>
+                            </summary>
+                            <div style="margin-top:6px; white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars($entry['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div>
+                        </details>
+                    <?php endforeach; ?>
+                </details>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Permission Anytime</div><div class="wo-value"><?php echo $wo['permission_anytime'] ? 'Yes' : 'No'; ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Permission Date/Time</div><div class="wo-value"><?php echo htmlspecialchars($wo['permission_date'] ?? '', ENT_QUOTES, 'UTF-8') . ' ' . htmlspecialchars($wo['permission_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Entry Date / Time Entered / Departed</div><div class="wo-value"><?php echo htmlspecialchars($wo['entry_date'] ?? '', ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($wo['time_entered'] ?? '', ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($wo['time_departed'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Created At</div><div class="wo-value"><?php echo htmlspecialchars($wo['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Last Updated</div><div class="wo-value"><?php
         $lu_time = $lastEditedAt ?? ($wo['updated_at'] ?? '');
         $lu_person = $lastEditor ?? '';
         echo htmlspecialchars($lu_time, ENT_QUOTES, 'UTF-8');
         if ($lu_person) echo ' by ' . htmlspecialchars($lu_person, ENT_QUOTES, 'UTF-8');
-    ?></td></tr>
-    </tbody>
-</table>
+    ?></div></div>
+</div>
 </div>
 
-<div id="status-guide-panel" style="display:none; max-width:960px; margin:0 auto 20px; padding:12px 16px; border:1px solid #dfe7f1; border-radius:8px; background:#f8fafc; box-sizing:border-box;">
+<div id="status-guide-panel" style="display:none; max-width:1200px; margin:0 auto 20px; padding:12px 16px; border:1px solid #dfe7f1; border-radius:8px; background:#f8fafc; box-sizing:border-box;">
     <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">Status guide</div>
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
         <div style="padding:8px 10px; border:1px solid #dbeafe; border-radius:8px; background:#eff6ff; color:#1d4ed8; font-size:12px; line-height:1.4;"><strong>Open:</strong> Your request has been received and is waiting for review.</div>
@@ -373,43 +493,9 @@ try {
     </div>
 </div>
 
-<?php if (!empty($workPerformedEntries)): ?>
-    <div style="max-width:960px; margin:0 auto 12px; padding:14px; border:1px solid #dfe7f1; border-radius:8px; background:#fff; box-sizing:border-box;">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-            <h3 style="margin:0;">Work Performed Entries</h3>
-            <div style="display:flex; align-items:center; gap:10px;">
-                <button type="button" class="small-toggle-btn" data-toggle-target="work-performed-entries-body" aria-expanded="false">Show</button>
-                <span style="background:#e8f5e9; color:#166534; font-weight:700; border-radius:999px; padding:6px 10px;">Total Time: <?php echo htmlspecialchars($totalWorkText, ENT_QUOTES, 'UTF-8'); ?></span>
-            </div>
-        </div>
-        <div id="work-performed-entries-body" style="display:none;">
-            <table style="width:100%; border-collapse:collapse;">
-                <thead>
-                    <tr>
-                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Date</th>
-                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Time</th>
-                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Performed By</th>
-                        <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Description</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($workPerformedEntries as $entry): ?>
-                        <tr>
-                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars(trim((($entry['firstname'] ?? '') . ' ' . ($entry['lastname'] ?? ''))) ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top; white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars($entry['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-<?php endif; ?>
-
 <?php
-// show full history (creation + edits) - only for non-technician roles
-if ($currentRole !== 'technician') {
+// show full history (creation + edits) - only for staff roles, hidden from customers
+if (in_array($currentRole, ['admin', 'office'], true)) {
     try {
     // creator info
     $creatorName = ($wo['received_first'] ?? '') ? ($wo['received_first'] . ' ' . ($wo['received_last'] ?? '')) : '';
@@ -457,7 +543,8 @@ if ($currentRole !== 'technician') {
 ?>
 
 <?php
-// Assignment and work-performed history
+// Assignment and work-performed history - only for staff roles, hidden from customers
+if (in_array($currentRole, ['admin', 'office', 'technician'], true)) {
 try {
     $assignStmt = $conn->prepare("SELECT e.*, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON e.edited_by = s.id WHERE e.workorder_id = ? AND e.field_name = 'work_performed_by' ORDER BY e.edited_at DESC");
     $assignStmt->execute([$id]);
@@ -584,6 +671,7 @@ try {
     }
 } catch (Exception $ex) {
     // ignore if workorder_edits missing or other DB errors
+}
 }
 
 require_once '../includes/footer.php';

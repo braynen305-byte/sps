@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'quick
         $target = $s->fetch(PDO::FETCH_ASSOC);
         if ($target && (int)($target['work_performed_by'] ?? 0) === $userId) {
             // fields technicians may update via quick form
-            $allowed = ['status','work_description','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
+            $allowed = ['status','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
             $changes = [];
             $updateParts = [];
             $params = [];
@@ -177,7 +177,6 @@ $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <option value="<?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($wo['status'] ?? '') === $st) ? 'selected' : ''; ?>><?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?></option>
                             <?php endforeach; ?>
                         </select></label><br>
-                        <label>Work Done / Notes:<br><textarea name="work_description" style="width:100%;min-height:100px;"></textarea></label>
                         <label>Entry Date: <input type="date" name="entry_date"></label>
                         <label>Time Entered: <input type="time" name="time_entered"></label>
                         <label>Time Departed: <input type="time" name="time_departed"></label>

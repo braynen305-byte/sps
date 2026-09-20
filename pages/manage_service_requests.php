@@ -40,6 +40,12 @@ try {
     // ignore migration issues if the table is already compatible
 }
 
+try {
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS created_via VARCHAR(30) DEFAULT NULL");
+} catch (Exception $e) {
+    // ignore if column already exists
+}
+
 $message = '';
 $messageType = 'success';
 
@@ -89,8 +95,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
                     priority,
                     order_received_by,
                     work_description,
+                    created_via,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
 
                 $success = $createWorkOrder->execute([
                     (int)$requestRow['customer_id'],
@@ -103,7 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
                     'Open',
                     (string)($requestRow['urgency'] ?? 'Normal'),
                     (int)($_SESSION['user_id'] ?? 0),
-                    $workDescription
+                    $workDescription,
+                    'service_request'
                 ]);
 
                 if (!$success) {
@@ -129,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
     }
 }
 
-$requests = $conn->query('SELECT r.*, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone FROM customer_service_requests r LEFT JOIN customers c ON c.id = r.customer_id ORDER BY r.created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
+$requests = $conn->query('SELECT r.*, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone, w.order_number AS linked_workorder_number FROM customer_service_requests r LEFT JOIN customers c ON c.id = r.customer_id LEFT JOIN workorders w ON w.id = r.approved_workorder_id ORDER BY r.created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
 
 $title = 'Manage Service Requests';
 require_once '../includes/header.php';
@@ -177,7 +185,7 @@ require_once '../includes/header.php';
                             }
                         ?>
                         <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top;">
-                            <td style="padding:6px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($requestLabel, ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:6px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2; "><a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"><?php echo htmlspecialchars($requestLabel, ENT_QUOTES, 'UTF-8'); ?></a></td>
                             <td style="padding:6px 8px; font-size:12px; line-height:1.2;">
                                 <?php echo htmlspecialchars($request['customer_name'] ?? 'Unknown Customer', ENT_QUOTES, 'UTF-8'); ?><br>
                                 <span style="font-size:11px; color:#64748b;"><?php echo htmlspecialchars($request['customer_email'] ?? '', ENT_QUOTES, 'UTF-8'); ?></span>
@@ -194,17 +202,18 @@ require_once '../includes/header.php';
                                 </span>
                             </td>
                             <td style="padding:10px 12px;">
-                                <?php if (($request['status'] ?? '') === 'Pending'): ?>
-                                    <form method="post" action="/sps/pages/manage_service_requests.php" style="display:flex; gap:8px; flex-wrap:wrap; margin:0;">
-                                        <input type="hidden" name="request_id" value="<?php echo (int)$request['id']; ?>">
-                                        <button type="submit" name="action" value="approve" style="background:#15803d; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Approve</button>
-                                        <button type="submit" name="action" value="reject" style="background:#b91c1c; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Reject</button>
-                                    </form>
-                                <?php elseif (!empty($request['approved_workorder_id'])): ?>
-                                    <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['approved_workorder_id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;">View Work Order</a>
-                                <?php else: ?>
-                                    <span style="color:#64748b;">No action</span>
-                                <?php endif; ?>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                                    <a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#0f172a; background:#e0f2fe; border:1px solid #bae6fd; text-decoration:none; font-weight:700; padding:6px 10px; border-radius:6px;">View</a>
+                                    <?php if (($request['status'] ?? '') === 'Pending'): ?>
+                                        <form method="post" action="/sps/pages/manage_service_requests.php" style="display:flex; gap:8px; flex-wrap:wrap; margin:0;">
+                                            <input type="hidden" name="request_id" value="<?php echo (int)$request['id']; ?>">
+                                            <button type="submit" name="action" value="approve" style="background:#15803d; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Approve</button>
+                                            <button type="submit" name="action" value="reject" style="background:#b91c1c; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Reject</button>
+                                        </form>
+                                    <?php elseif (!empty($request['approved_workorder_id'])): ?>
+                                        <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['approved_workorder_id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;">View Work Order #<?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['approved_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>

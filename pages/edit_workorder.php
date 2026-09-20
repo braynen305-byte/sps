@@ -1,6 +1,23 @@
 <?php
 session_start();
 
+function format_work_duration($time) {
+    $parts = explode(':', (string)$time);
+    $hours = (int)($parts[0] ?? 0);
+    $minutes = (int)($parts[1] ?? 0);
+    return $hours . 'h ' . sprintf('%02d', $minutes) . 'm';
+}
+
+function format_entry_logged_at($timestamp) {
+    $ts = strtotime((string)$timestamp);
+    return $ts ? date('M j, Y \a\t g:ia', $ts) : '';
+}
+
+function format_entry_day($dateValue) {
+    $ts = strtotime((string)$dateValue);
+    return $ts ? date('M j, Y', $ts) : (string)$dateValue;
+}
+
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     header('Location: /sps/login.php');
     exit;
@@ -140,23 +157,33 @@ $isAssignedTechnician = ($currentRole === 'technician' && (int)($wo['work_perfor
 $techAssignmentWarning = ($currentRole === 'technician' && !$isAssignedTechnician) ? 'This work order must be assigned to you to edit.' : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if ($currentRole === 'technician' && isset($_POST['tech_action']) && $_POST['tech_action'] === 'add_work_performed') {
-        if (!$isAssignedTechnician) {
+    $canAddWorkPerformed = ($currentRole === 'admin') || ($currentRole === 'technician' && $isAssignedTechnician);
+    if (in_array($currentRole, ['admin', 'technician'], true) && isset($_POST['tech_action']) && $_POST['tech_action'] === 'add_work_performed') {
+        if (!$canAddWorkPerformed) {
             $techEntryMessage = 'You can only add work performed on work orders assigned to you.';
         } else {
             $performedDate = trim((string)($_POST['performed_date'] ?? ''));
-            $performedTime = trim((string)($_POST['performed_time'] ?? ''));
+            $performedHours = max(0, min(99, (int)($_POST['performed_hours'] ?? 0)));
+            $performedMinutes = max(0, min(59, (int)($_POST['performed_minutes'] ?? 0)));
+            $performedTime = sprintf('%02d:%02d:00', $performedHours, $performedMinutes);
             $performedDescription = trim((string)($_POST['performed_description'] ?? ''));
 
-            if ($performedDate !== '' && $performedTime !== '' && $performedDescription !== '') {
+            if ($performedDate !== '' && ($performedHours > 0 || $performedMinutes > 0) && $performedDescription !== '') {
                 $insertEntry = $conn->prepare('INSERT INTO work_performed_entries (workorder_id, performed_date, performed_time, description, added_by) VALUES (?, ?, ?, ?, ?)');
                 $insertEntry->execute([$id, $performedDate, $performedTime, $performedDescription, $userId]);
+
+                $customerIdForEntry = (int)($wo['customer_id'] ?? 0);
+                if ($customerIdForEntry > 0) {
+                    $entryStatus = trim((string)($wo['status'] ?? 'Updated'));
+                    notify_customer_workorder_update($conn, $customerIdForEntry, $id, $entryStatus);
+                }
+
                 $techEntryMessage = 'Work performed entry added successfully.';
                 header('Location: /sps/pages/edit_workorder.php?id=' . $id . '&entry_saved=1');
                 exit;
             }
 
-            $techEntryMessage = 'Please enter a date, time, and description for the work performed entry.';
+            $techEntryMessage = 'Please enter a date, time spent, and description for the work performed entry.';
         }
     }
 
@@ -170,7 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'client_name','client_phone','location','order_date','expected_start_date','expected_end_date',
         'requested_work','additional_comments','vessel_vin','vessel_hours','labor_time','parts_cost',
         'chargeable_to','order_received_by','work_performed_by','permission_anytime','permission_date','permission_time',
-        'entry_date','time_entered','time_departed','work_description','order_number'
+        'entry_date','time_entered','time_departed','order_number'
     ];
 
     if (!$hasStatus) {
@@ -265,10 +292,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $staff = $conn->query('SELECT id, firstname, lastname, role FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
 
 $techWorkEntries = [];
-if ($currentRole === 'technician') {
-    $techWorkEntriesStmt = $conn->prepare('SELECT wpe.*, s.firstname, s.lastname FROM work_performed_entries wpe LEFT JOIN staff s ON s.id = wpe.added_by WHERE wpe.workorder_id = ? ORDER BY wpe.performed_date DESC, wpe.performed_time DESC');
+if (in_array($currentRole, ['admin', 'technician'], true)) {
+    $techWorkEntriesStmt = $conn->prepare('SELECT wpe.*, s.firstname, s.lastname FROM work_performed_entries wpe LEFT JOIN staff s ON s.id = wpe.added_by WHERE wpe.workorder_id = ? ORDER BY wpe.performed_date DESC, wpe.created_at DESC');
     $techWorkEntriesStmt->execute([$id]);
     $techWorkEntries = $techWorkEntriesStmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$techWorkEntriesByDate = [];
+foreach ($techWorkEntries as $entry) {
+    $dateKey = $entry['performed_date'] ?? '';
+    $techWorkEntriesByDate[$dateKey][] = $entry;
 }
 
 $title = 'Edit Work Order';
@@ -300,6 +333,7 @@ require_once '../includes/header.php';
     form.edit-form .actions a { margin-left:10px; color:#333; text-decoration:none; }
 </style>
 
+<form id="add-work-performed-form" method="post"></form>
 <form method="post" class="edit-form">
     <input type="hidden" name="id" value="<?php echo (int)$wo['id']; ?>">
 
@@ -370,40 +404,42 @@ require_once '../includes/header.php';
                 <?php endif; ?>
                 <div style="display:flex; flex-direction:column; gap:10px; margin:0;">
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                        <label style="flex:1; min-width:160px; font-weight:700; margin:0;">Date<br><input type="date" name="performed_date" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
-                        <label style="flex:1; min-width:160px; font-weight:700; margin:0;">Time Spent<br><input type="time" name="performed_time" required step="900" style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
+                        <label style="flex:1; min-width:160px; font-weight:700; margin:0;">Date<br><input type="date" name="performed_date" form="add-work-performed-form" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"></label>
+                        <label style="flex:1; min-width:160px; font-weight:700; margin:0;">Time Spent<br>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <input type="number" name="performed_hours" form="add-work-performed-form" min="0" max="99" value="0" required style="width:70px; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"> <span>hrs</span>
+                                <input type="number" name="performed_minutes" form="add-work-performed-form" min="0" max="59" step="5" value="0" required style="width:70px; padding:8px; border:1px solid #cbd5e0; border-radius:4px;"> <span>min</span>
+                            </div>
+                        </label>
                     </div>
-                    <label style="font-weight:700; margin:0;">Description<br><textarea name="performed_description" rows="4" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px; resize:vertical;"></textarea></label>
-                    <button type="submit" name="tech_action" value="add_work_performed" style="padding:10px 16px; background:#007BFF; color:#fff; border:none; border-radius:4px; cursor:pointer; width:max-content;">Save Work Performed</button>
+                    <label style="font-weight:700; margin:0;">Description<br><textarea name="performed_description" form="add-work-performed-form" rows="4" required style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:4px; resize:vertical;"></textarea></label>
+                    <button type="submit" form="add-work-performed-form" name="tech_action" value="add_work_performed" style="padding:10px 16px; background:#007BFF; color:#fff; border:none; border-radius:4px; cursor:pointer; width:max-content;">Save Work Performed</button>
                 </div>
             </div>
             <?php if (!empty($techWorkEntries)): ?>
                 <div style="margin-top:16px;">
-                    <h4 style="margin:0 0 8px;">Recent Work Performed Entries</h4>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <thead>
-                            <tr>
-                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Date</th>
-                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Time</th>
-                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Performed By</th>
-                                <th style="text-align:left; padding:8px; border-bottom:1px solid #dfe7f1;">Description</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($techWorkEntries as $entry): ?>
-                                <tr>
-                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars($entry['performed_time'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top;"><?php echo htmlspecialchars(trim((($entry['firstname'] ?? '') . ' ' . ($entry['lastname'] ?? ''))) ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td style="padding:8px; border-bottom:1px solid #f1f5f9; vertical-align:top; white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars($entry['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
-                                </tr>
+                    <h4 style="margin:0 0 8px;">Work Performed</h4>
+                    <?php $entryColors = ['#f8fbff', '#fffdf7']; $entryIndex = 0; ?>
+                    <?php foreach ($techWorkEntriesByDate as $dayKey => $dayEntries): ?>
+                        <details open style="margin-bottom:14px;">
+                            <summary style="cursor:pointer; text-align:left; font-weight:700; color:#0f172a; padding:6px 0; border-bottom:2px solid #dfe7f1; margin-bottom:6px;"><?php echo htmlspecialchars(format_entry_day($dayKey), ENT_QUOTES, 'UTF-8'); ?></summary>
+                            <?php foreach ($dayEntries as $entry): ?>
+                                <details style="padding:8px 10px; margin-bottom:6px; border-radius:6px; background:<?php echo $entryColors[$entryIndex++ % count($entryColors)]; ?>;">
+                                    <summary style="cursor:pointer; display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; font-size:13px; color:#475569;">
+                                        <span><?php echo htmlspecialchars(format_entry_logged_at($entry['created_at'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <span>&middot;</span>
+                                        <span style="font-weight:600;"><?php echo htmlspecialchars(format_work_duration($entry['performed_time'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></span>
+                                        <span>&middot;</span>
+                                        <span>Technician: <?php echo htmlspecialchars(trim((($entry['firstname'] ?? '') . ' ' . ($entry['lastname'] ?? ''))) ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></span>
+                                    </summary>
+                                    <div style="margin-top:6px; white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars($entry['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div>
+                                </details>
                             <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                        </details>
+                    <?php endforeach; ?>
                 </div>
             <?php endif; ?>
         <?php elseif ($currentRole === 'admin'): ?>
-            <label>Work Description<br><textarea name="work_description"><?php echo htmlspecialchars($wo['work_description'] ?? '', ENT_QUOTES, 'UTF-8'); ?></textarea></label>
             <label>Entry Date<br><input type="date" name="entry_date" value="<?php echo htmlspecialchars($wo['entry_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
             <label>Time Entered<br><input type="time" name="time_entered" value="<?php echo htmlspecialchars($wo['time_entered'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
             <label>Time Departed<br><input type="time" name="time_departed" value="<?php echo htmlspecialchars($wo['time_departed'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"></label>
