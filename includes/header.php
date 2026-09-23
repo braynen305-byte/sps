@@ -23,7 +23,7 @@ if (session_status() === PHP_SESSION_NONE) {
 <nav>
         <div class="nav-shell">
             <ul class="nav-main-links">
-                <li><a href="/sps/home.php">Home</a></li>
+                <li><a href="/sps/index.php">Home</a></li>
                 <?php if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true): ?>
                     <li>
                         <?php
@@ -38,10 +38,11 @@ if (session_status() === PHP_SESSION_NONE) {
                     <?php endif; ?>
                     <li><a href="/sps/logout.php">Logout</a></li>
                 <?php else: ?>
-                    <li><a href="/sps/index.php">Login</a></li>
+                    <li><a href="/sps/login.php">Staff Portal</a></li>
                     <li><a href="/sps/customer_login.php">Customer Portal</a></li>
                 <?php endif; ?>
                 <li><a href="/sps/pages/customer_support.php">Support</a></li>
+                <li><a href="/sps/pages/about_us.php">About Us</a></li>
             </ul>
             <?php if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true): ?>
                 <?php

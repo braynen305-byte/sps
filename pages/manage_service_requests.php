@@ -41,9 +41,22 @@ try {
 }
 
 try {
-    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS created_via VARCHAR(30) DEFAULT NULL");
-} catch (Exception $e) {
-    // ignore if column already exists
+     $columnCheck = $conn->query("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'workorders'
+          AND COLUMN_NAME = 'created_via'
+    ");
+
+    if ((int)$columnCheck->fetchColumn() === 0) {
+        $conn->exec("
+            ALTER TABLE workorders
+            ADD COLUMN created_via VARCHAR(30) DEFAULT NULL
+        ");
+    }
+} catch (PDOException $e) {
+    die('Database migration error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
 }
 
 $message = '';
@@ -106,7 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
                     (string)$requestRow['location'],
                     $orderDate,
                     (string)($requestRow['problem_summary'] ?? $requestRow['description'] ?? 'Service requested'),
-                    'Created from customer service request #' . (int)$requestRow['id'],
+                    (string)($requestRow['problem_summary'] ?? ''),
                     'Open',
                     (string)($requestRow['urgency'] ?? 'Normal'),
                     (int)($_SESSION['user_id'] ?? 0),

@@ -93,6 +93,23 @@ if (!$wo) {
     exit;
 }
 
+// Find the Customer Service Request linked to this Work Order
+$serviceRequest = null;
+
+try {
+    $serviceRequestStmt = $conn->prepare('
+        SELECT id, request_number, equipment_details
+        FROM customer_service_requests
+        WHERE approved_workorder_id = ?
+        LIMIT 1
+    ');
+
+    $serviceRequestStmt->execute([$id]);
+    $serviceRequest = $serviceRequestStmt->fetch(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $serviceRequest = null;
+}
+
 $displayOrderNumber = !empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT);
 
 $assignedTechDisplay = 'Not Assigned';
@@ -426,7 +443,15 @@ try {
     <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Priority</div><div class="wo-value"><?php $rawPriority = isset($wo['priority']) ? (string)$wo['priority'] : 'Normal'; $isHigh = (strtolower(trim($rawPriority)) === 'high'); ?><span style="<?php echo $isHigh ? 'color:#721c24;background:#f8d7da;padding:4px 8px;border-radius:4px;' : ''; ?>"><?php echo htmlspecialchars($rawPriority, ENT_QUOTES, 'UTF-8'); ?></span></div></div>
     <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Expected Start</div><div class="wo-value"><?php echo htmlspecialchars(!empty($wo['expected_start_date']) ? $wo['expected_start_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></div></div>
     <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Expected End</div><div class="wo-value"><?php echo htmlspecialchars(!empty($wo['expected_end_date']) ? $wo['expected_end_date'] : 'N/A', ENT_QUOTES, 'UTF-8'); ?></div></div>
-    <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Requested Work</div><div class="wo-value"><?php echo nl2br(htmlspecialchars($wo['requested_work'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div></div>
+<?php if (!empty($serviceRequest['equipment_details'])): ?>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;">
+        <div class="wo-label">Plate / Asset</div>
+        <div class="wo-value">
+            <?php echo htmlspecialchars($serviceRequest['equipment_details'], ENT_QUOTES, 'UTF-8'); ?>
+        </div>
+    </div>
+<?php endif; ?>
+    <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Service Request #</div><div class="wo-value"><?php echo htmlspecialchars(!empty($serviceRequest['request_number'])? $serviceRequest['request_number']: 'N/A', ENT_QUOTES, 'UTF-8'); ?></div></div>    <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Requested Work</div><div class="wo-value"><?php echo nl2br(htmlspecialchars($wo['requested_work'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div></div>
     <div class="wo-field full" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Additional Comments</div><div class="wo-value"><?php echo nl2br(htmlspecialchars($wo['additional_comments'] ?? '', ENT_QUOTES, 'UTF-8')); ?></div></div>
     <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Vessel VIN</div><div class="wo-value"><?php echo htmlspecialchars($wo['vessel_vin'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
     <div class="wo-field" style="background:<?php echo $fieldColors[$fieldIdx++ % count($fieldColors)]; ?>;"><div class="wo-label">Vessel Hours</div><div class="wo-value"><?php echo htmlspecialchars($wo['vessel_hours'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
