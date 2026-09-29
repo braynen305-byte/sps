@@ -15,6 +15,7 @@ $conn->exec("CREATE TABLE IF NOT EXISTS customer_service_requests (
     service_type VARCHAR(100) NOT NULL,
     location VARCHAR(255) NOT NULL,
     preferred_date DATE DEFAULT NULL,
+    preferred_end_date DATE DEFAULT NULL,
     customer_phone VARCHAR(30) DEFAULT NULL,
     urgency VARCHAR(30) NOT NULL DEFAULT 'Normal',
     equipment_details VARCHAR(255) DEFAULT NULL,
@@ -30,6 +31,7 @@ $conn->exec("CREATE TABLE IF NOT EXISTS customer_service_requests (
 
 try {
     $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS request_number VARCHAR(30) DEFAULT NULL");
+     $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS preferred_end_date DATE DEFAULT NULL");
     $requestNumberRows = $conn->query("SELECT id FROM customer_service_requests WHERE request_number IS NULL OR request_number = '' ORDER BY id");
     while ($requestRow = $requestNumberRows->fetch(PDO::FETCH_ASSOC)) {
         $requestNumber = 'SR-' . str_pad((string)(int)$requestRow['id'], 5, '0', STR_PAD_LEFT);
@@ -87,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
                 $message = 'Customer record not found for this request.';
                 $messageType = 'error';
             } else {
-                $orderDate = !empty($requestRow['preferred_date']) ? $requestRow['preferred_date'] : date('Y-m-d');
+                $orderDate = date('Y-m-d');
                 $workDescription = trim((string)($requestRow['description'] ?? ''));
                 if (!empty($requestRow['equipment_details'])) {
                     $workDescription = 'Equipment / Asset: ' . trim((string)$requestRow['equipment_details']) . "\n\n" . $workDescription;
@@ -162,7 +164,7 @@ $title = 'Manage Service Requests';
 require_once '../includes/header.php';
 ?>
 
-<div style="max-width: 1200px; margin: 32px auto 48px; padding: 0 18px;">
+<div style="max-width: 1700px; margin: 32px auto 48px; padding: 0 18px;">
     <div class="page-header">
         <h2 style="margin:0;">Service Requests</h2>
         <a href="/sps/pages/admin_dashboard.php" style="color:#007BFF; text-decoration:none;">← Back to Dashboard</a>
@@ -187,7 +189,7 @@ require_once '../includes/header.php';
                         <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Customer</th>
                         <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Type</th>
                         <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Location</th>
-                        <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Preferred Date</th>
+                        <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Preferred Dates</th>
                         <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Urgency</th>
                         <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Summary</th>
                         <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Details</th>
@@ -211,7 +213,27 @@ require_once '../includes/header.php';
                             </td>
                             <td style="padding:6px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['service_type'] ?? 'Service', ENT_QUOTES, 'UTF-8'); ?></td>
                             <td style="padding:10px 12px;"><?php echo htmlspecialchars($request['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td style="padding:10px 12px;"><?php echo htmlspecialchars($request['preferred_date'] ?? 'Not set', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:4px 8px; font-size:12px; line-height:1.5;">
+    <div>
+        <strong>Start:</strong>
+        <?php
+        $preferredStart = trim((string)($request['preferred_date'] ?? ''));
+        echo $preferredStart !== ''
+            ? htmlspecialchars(date('M j, Y', strtotime($preferredStart)), ENT_QUOTES, 'UTF-8')
+            : 'Not set';
+        ?>
+    </div>
+
+    <div>
+        <strong>End:</strong>
+        <?php
+        $preferredEnd = trim((string)($request['preferred_end_date'] ?? ''));
+        echo $preferredEnd !== ''
+            ? htmlspecialchars(date('M j, Y', strtotime($preferredEnd)), ENT_QUOTES, 'UTF-8')
+            : 'Not set';
+        ?>
+    </div>
+</td>
                             <td style="padding:10px 12px;"><?php echo htmlspecialchars($request['urgency'] ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
                             <td style="padding:10px 12px; max-width:220px;"><?php echo nl2br(htmlspecialchars($request['problem_summary'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
                             <td style="padding:10px 12px; max-width:280px;"><?php echo nl2br(htmlspecialchars($request['description'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
@@ -230,7 +252,7 @@ require_once '../includes/header.php';
                                             <button type="submit" name="action" value="reject" style="background:#b91c1c; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Reject</button>
                                         </form>
                                     <?php elseif (!empty($request['approved_workorder_id'])): ?>
-                                        <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['approved_workorder_id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;">View Work Order #<?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['approved_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
+                                        <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['approved_workorder_id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"> View <?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['approved_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
                                     <?php endif; ?>
                                 </div>
                             </td>

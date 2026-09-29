@@ -306,21 +306,26 @@ foreach ($workOrders as $wo) {
                                     <td style="padding:4px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2;"><a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"><?php echo htmlspecialchars($requestNumber, ENT_QUOTES, 'UTF-8'); ?></a></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['service_type'] ?? 'Service', ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
-    <?php
-    $preferredStart = trim((string)($request['preferred_date'] ?? ''));
-    $preferredEnd = trim((string)($request['preferred_end_date'] ?? ''));
+                                    <td style="padding:4px 8px; font-size:12px; line-height:1.5;">
+    <div>
+        <strong>Start:</strong>
+        <?php
+        $preferredStart = trim((string)($request['preferred_date'] ?? ''));
+        echo $preferredStart !== ''
+            ? htmlspecialchars(date('M j, Y', strtotime($preferredStart)), ENT_QUOTES, 'UTF-8')
+            : 'Not set';
+        ?>
+    </div>
 
-    if ($preferredStart !== '' && $preferredEnd !== '') {
-        echo htmlspecialchars($preferredStart . ' to ' . $preferredEnd, ENT_QUOTES, 'UTF-8');
-    } elseif ($preferredStart !== '') {
-        echo htmlspecialchars($preferredStart, ENT_QUOTES, 'UTF-8');
-    } elseif ($preferredEnd !== '') {
-        echo htmlspecialchars($preferredEnd, ENT_QUOTES, 'UTF-8');
-    } else {
-        echo 'Not set';
-    }
-    ?>
+    <div>
+        <strong>End:</strong>
+        <?php
+        $preferredEnd = trim((string)($request['preferred_end_date'] ?? ''));
+        echo $preferredEnd !== ''
+            ? htmlspecialchars(date('M j, Y', strtotime($preferredEnd)), ENT_QUOTES, 'UTF-8')
+            : 'Not set';
+        ?>
+    </div>
 </td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
                                         <?php
