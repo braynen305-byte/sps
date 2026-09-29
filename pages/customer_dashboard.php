@@ -42,6 +42,7 @@ $conn->exec("CREATE TABLE IF NOT EXISTS customer_service_requests (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
 try {
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS preferred_end_date DATE DEFAULT NULL");
     $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS request_number VARCHAR(30) DEFAULT NULL");
     $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(30) DEFAULT NULL");
     $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS urgency VARCHAR(30) NOT NULL DEFAULT 'Normal'");
@@ -280,7 +281,7 @@ foreach ($workOrders as $wo) {
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Request #</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Type</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Location</th>
-                                <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Preferred Date</th>
+                                <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Preferred Dates</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Status</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Action</th>
                             </tr>
@@ -305,7 +306,22 @@ foreach ($workOrders as $wo) {
                                     <td style="padding:4px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2;"><a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"><?php echo htmlspecialchars($requestNumber, ENT_QUOTES, 'UTF-8'); ?></a></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['service_type'] ?? 'Service', ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['preferred_date'] ?? 'Not set', ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
+    <?php
+    $preferredStart = trim((string)($request['preferred_date'] ?? ''));
+    $preferredEnd = trim((string)($request['preferred_end_date'] ?? ''));
+
+    if ($preferredStart !== '' && $preferredEnd !== '') {
+        echo htmlspecialchars($preferredStart . ' to ' . $preferredEnd, ENT_QUOTES, 'UTF-8');
+    } elseif ($preferredStart !== '') {
+        echo htmlspecialchars($preferredStart, ENT_QUOTES, 'UTF-8');
+    } elseif ($preferredEnd !== '') {
+        echo htmlspecialchars($preferredEnd, ENT_QUOTES, 'UTF-8');
+    } else {
+        echo 'Not set';
+    }
+    ?>
+</td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
                                         <?php
                                         $requestStatus = strtolower(trim((string)($request['status'] ?? 'Pending')));

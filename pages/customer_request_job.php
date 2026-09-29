@@ -17,6 +17,7 @@ try {
         'equipment_details' => "ALTER TABLE customer_service_requests ADD COLUMN equipment_details VARCHAR(255) DEFAULT NULL",
         'problem_summary' => "ALTER TABLE customer_service_requests ADD COLUMN problem_summary VARCHAR(255) DEFAULT NULL",
         'special_instructions' => "ALTER TABLE customer_service_requests ADD COLUMN special_instructions LONGTEXT DEFAULT NULL",
+        'preferred_end_date' => "ALTER TABLE customer_service_requests ADD COLUMN preferred_end_date DATE DEFAULT NULL",
     ];
 
     foreach ($requiredColumns as $columnName => $alterSql) {
@@ -36,6 +37,7 @@ try {
         service_type VARCHAR(100) NOT NULL,
         location VARCHAR(255) NOT NULL,
         preferred_date DATE DEFAULT NULL,
+        preferred_end_date DATE DEFAULT NULL,
         customer_phone VARCHAR(30) DEFAULT NULL,
         urgency VARCHAR(30) NOT NULL DEFAULT 'Normal',
         equipment_details VARCHAR(255) DEFAULT NULL,
@@ -74,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $serviceType = trim((string)($_POST['service_type'] ?? ''));
     $location = trim((string)($_POST['location'] ?? ''));
     $preferredDate = trim((string)($_POST['preferred_date'] ?? ''));
+    $preferredEndDate = trim((string)($_POST['preferred_end_date'] ?? ''));
     $customerPhone = trim((string)($_POST['customer_phone'] ?? ''));
     $urgency = trim((string)($_POST['urgency'] ?? 'Normal'));
     $equipmentDetails = trim((string)($_POST['equipment_details'] ?? ''));
@@ -108,8 +111,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $messageType = 'error';
         } else {
         $schemaColumns = $conn->query("SHOW COLUMNS FROM customer_service_requests")->fetchAll(PDO::FETCH_COLUMN);
-        $insertFields = ['customer_id', 'service_type', 'location', 'preferred_date'];
-        $insertValues = [$customerId, $serviceType, $location, $preferredDate !== '' ? $preferredDate : null];
+        $insertFields = ['customer_id', 'service_type', 'location', 'preferred_date', 'preferred_end_date'];
+        $insertValues = [$customerId, $serviceType, $location, $preferredDate !== '' ? $preferredDate : null, $preferredEndDate !== '' ? $preferredEndDate : null];
 
         if (in_array('customer_phone', $schemaColumns, true)) {
             $insertFields[] = 'customer_phone';
@@ -216,8 +219,8 @@ require_once '../includes/header.php';
                     <input type="date" name="preferred_date" id="preferred_date" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
                 </div>
                 <div>
-                    <label for="preferred_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred End Date</label>
-                    <input type="date" name="preferred_date" id="preferred_date" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
+                    <label for="preferred_end_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred End Date</label>
+                    <input type="date" name="preferred_end_date" id="preferred_end_date" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
                 </div>
             </div>
 

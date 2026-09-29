@@ -49,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isEditable) {
         $serviceType = trim((string)($_POST['service_type'] ?? ''));
         $location = trim((string)($_POST['location'] ?? ''));
         $preferredDate = trim((string)($_POST['preferred_date'] ?? ''));
+        $preferredEndDate = trim((string)($_POST['preferred_end_date'] ?? ''));
         $customerPhone = trim((string)($_POST['customer_phone'] ?? ''));
         $urgency = trim((string)($_POST['urgency'] ?? 'Normal'));
         $equipmentDetails = trim((string)($_POST['equipment_details'] ?? ''));
@@ -60,13 +61,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isEditable) {
             $message = 'Please provide the service type, service location, brief problem summary, and detailed description of the issue.';
         } else {
             $update = $conn->prepare('UPDATE customer_service_requests SET
-                service_type = ?, location = ?, preferred_date = ?, customer_phone = ?, urgency = ?,
+                service_type = ?, location = ?, preferred_date = ?, preferred_end_date = ?, customer_phone = ?, urgency = ?,
                 equipment_details = ?, problem_summary = ?, description = ?, special_instructions = ?, updated_at = NOW()
                 WHERE id = ? AND customer_id = ? AND status = ?');
             $success = $update->execute([
                 $serviceType,
                 $location,
                 $preferredDate !== '' ? $preferredDate : null,
+                $preferredEndDate !== '' ? $preferredEndDate : null,
                 $customerPhone !== '' ? $customerPhone : null,
                 $urgency !== '' ? $urgency : 'Normal',
                 $equipmentDetails !== '' ? $equipmentDetails : null,
@@ -163,8 +165,14 @@ require_once '../includes/header.php';
                     </select>
                 </div>
                 <div>
-                    <label for="preferred_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred Date</label>
+                    <label for="preferred_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">
+                        
+                    </label>
                     <input type="date" name="preferred_date" id="preferred_date" value="<?php echo htmlspecialchars($request['preferred_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
+                </div>
+                <div>
+                    <label for="preferred_end_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred End Date</label>
+                    <input type="date" name="preferred_end_date" id="preferred_end_date" value="<?php echo htmlspecialchars($request['preferred_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
                 </div>
             </div>
 
@@ -207,7 +215,8 @@ require_once '../includes/header.php';
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
                 <div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Service Type</div><div><?php echo htmlspecialchars($request['service_type'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
                 <div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Urgency</div><div><?php echo htmlspecialchars($request['urgency'] ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></div></div>
-                <div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Preferred Date</div><div><?php echo htmlspecialchars($request['preferred_date'] ?? 'Not set', ENT_QUOTES, 'UTF-8'); ?></div></div>
+                <div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Preferred Start Date</div><div><?php echo htmlspecialchars($request['preferred_date'] ?? 'Not set', ENT_QUOTES, 'UTF-8'); ?></div></div>
+<div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Preferred End Date</div><div><?php echo htmlspecialchars($request['preferred_end_date'] ?? 'Not set', ENT_QUOTES, 'UTF-8'); ?></div></div>
                 <div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Best Contact Phone</div><div><?php echo htmlspecialchars($request['customer_phone'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
                 <div><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Equipment / Asset</div><div><?php echo htmlspecialchars($request['equipment_details'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
                 <div style="grid-column: 1 / -1;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Service Location</div><div><?php echo htmlspecialchars($request['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div></div>
