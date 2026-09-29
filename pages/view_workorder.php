@@ -98,7 +98,7 @@ $serviceRequest = null;
 
 try {
     $serviceRequestStmt = $conn->prepare('
-    SELECT id, request_number, equipment_details, problem_summary, description, speacial_instructions
+    SELECT id, request_number, equipment_details, problem_summary, description, special_instructions
     FROM customer_service_requests
     WHERE approved_workorder_id = ?
     LIMIT 1
