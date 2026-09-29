@@ -113,19 +113,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['action'])) {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
 
                 $success = $createWorkOrder->execute([
-                    (int)$requestRow['customer_id'],
-                    (string)($customerRow['name'] ?? 'Customer'),
-                    (string)($requestRow['customer_phone'] ?? ($customerRow['phone'] ?? '')),
-                    (string)$requestRow['location'],
-                    $orderDate,
-                    (string)($requestRow['problem_summary'] ?? $requestRow['description'] ?? 'Service requested'),
-                    (string)($requestRow['problem_summary'] ?? ''),
-                    'Open',
-                    (string)($requestRow['urgency'] ?? 'Normal'),
-                    (int)($_SESSION['user_id'] ?? 0),
-                    $workDescription,
-                    'service_request'
-                ]);
+    (int)$requestRow['customer_id'],
+    (string)($customerRow['name'] ?? 'Customer'),
+    (string)($requestRow['customer_phone'] ?? ($customerRow['phone'] ?? '')),
+    (string)$requestRow['location'],
+    $orderDate,
+
+    // Requested Work will be displayed from the linked Service Request
+    // on the View Work Order page.
+    (string)($requestRow['problem_summary'] ?? $requestRow['description'] ?? 'Service requested'),
+
+    // Leave Additional Comments blank for Service Request-created work orders.
+    '',
+
+    'Open',
+    (string)($requestRow['urgency'] ?? 'Normal'),
+    (int)($_SESSION['user_id'] ?? 0),
+    $workDescription,
+    'service_request'
+]);
 
                 if (!$success) {
                     $message = 'The work order could not be created from this request.';
