@@ -212,7 +212,11 @@ require_once '../includes/header.php';
                 </div>
 
                 <div>
-                    <label for="preferred_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred Date</label>
+                    <label for="preferred_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred Start Date</label>
+                    <input type="date" name="preferred_date" id="preferred_date" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
+                </div>
+                <div>
+                    <label for="preferred_date" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Preferred End Date</label>
                     <input type="date" name="preferred_date" id="preferred_date" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
                 </div>
             </div>
