@@ -18,6 +18,9 @@ try {
 // ensure order_number column exists (optional manual number)
 try {
     $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `order_number` VARCHAR(100) DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `service_type` VARCHAR(100) DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `equipment_details` VARCHAR(255) DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `special_instructions` LONGTEXT DEFAULT NULL");
 } catch (Exception $ex) {
     // ignore
 }
@@ -50,6 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $clientPhone = trim($_POST['client_phone'] ?? '');
     $location = trim($_POST['location'] ?? '');
     $orderDate = $_POST['order_date'] ?? '';
+    $serviceType = trim($_POST['service_type'] ?? '');
+    $equipmentDetails = trim($_POST['equipment_details'] ?? '');
+    $specialInstructions = trim($_POST['special_instructions'] ?? '');
     $expectedStartDate = $_POST['expected_start_date'] ?? '';
     $expectedEndDate = $_POST['expected_end_date'] ?? '';
     $requestedWork = trim($_POST['requested_work'] ?? '');
@@ -77,14 +83,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $stmt = $conn->prepare('
+
                 INSERT INTO workorders (
                     customer_id, client_name, client_phone, location, order_date, 
+                    service_type, equipment_details, special_instructions,
                     expected_start_date, expected_end_date, requested_work, 
                     additional_comments, work_description, vessel_vin, vessel_hours, labor_time, 
                     parts_cost, chargeable_to, order_received_by, work_performed_by,
                     permission_anytime, permission_date, permission_time,
                     entry_date, time_entered, time_departed, priority, order_number, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ');
             
                 if (!empty($workPerformedBy)) {
@@ -99,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $result = $stmt->execute([
                 $customerId ?: null, $clientName, $clientPhone, $location, $orderDate,
+                $serviceType, $equipmentDetails, $specialInstructions,
                 $expectedStartDate ?: null, $expectedEndDate ?: null, $requestedWork,
                 $additionalComments, $workDescription, $vesselVin, $vesselHours, $laborTime,
                 $partsCost ?: null, $chargeableTo, $orderReceivedBy, $workPerformedBy ?: null,
@@ -418,6 +427,22 @@ document.addEventListener('DOMContentLoaded', function () {
         </div>
         <div class="form-row">
             <div class="form-group">
+                <label for="service_type" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Service Type</label>
+                    <select name="service_type" id="service_type" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
+                        <?php foreach (['Repair','Inspection','Maintenance','Installation','Service Call','Other'] as $opt): ?>
+                            <option value="<?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?>" <?php echo ($request['service_type'] ?? '') === $opt ? 'selected' : ''; ?>><?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+            </div>
+            <div class="form-group">
+                <label>Vessel / Asset</label>
+                <input type="text" name="equipment_asset" placeholder="Boat, motor, unit, model or equipment">
+            </div>
+            
+        
+        </div>
+        <div class="form-row">
+            <div class="form-group">
                 <label>Expected Start Date</label>
                 <input type="date" name="expected_start_date">
             </div>
@@ -503,7 +528,7 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
             <?php if ($currentRole !== 'office'): ?>
             <div class="form-group">
-                <label>Vessel VIN #</label>
+                <label>Vessel(Unit) identification #</label>
                 <input type="text" name="vessel_vin">
             </div>
             <?php endif; ?>

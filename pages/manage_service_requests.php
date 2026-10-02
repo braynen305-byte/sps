@@ -164,7 +164,7 @@ $title = 'Manage Service Requests';
 require_once '../includes/header.php';
 ?>
 
-<div style="max-width: 1700px; margin: 32px auto 48px; padding: 0 18px;">
+<div style="max-width: 1750px; margin: 32px auto 48px; padding: 0 18px;">
     <div class="page-header">
         <h2 style="margin:0;">Service Requests</h2>
         <a href="/sps/pages/admin_dashboard.php" style="color:#007BFF; text-decoration:none;">← Back to Dashboard</a>
@@ -242,17 +242,17 @@ require_once '../includes/header.php';
                                     <?php echo htmlspecialchars($request['status'] ?? 'Pending', ENT_QUOTES, 'UTF-8'); ?>
                                 </span>
                             </td>
-                            <td style="padding:10px 12px;">
-                                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                                    <a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#0f172a; background:#e0f2fe; border:1px solid #bae6fd; text-decoration:none; font-weight:700; padding:6px 10px; border-radius:6px;">View</a>
+                            <td style="padding:10px 12px; width:390px;">
+                                <div style="display:flex; gap:0px; flex-wrap:wrap; align-items:center;">
+                                    <a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#0f172a; background:#e0f2fe; border:1px solid #bae6fd; text-decoration:none; font-weight:700; margin:0; padding:6px 10px; border-radius:6px;">View</a>
                                     <?php if (($request['status'] ?? '') === 'Pending'): ?>
-                                        <form method="post" action="/sps/pages/manage_service_requests.php" style="display:flex; gap:8px; flex-wrap:wrap; margin:0;">
+                                        <form method="post" action="/sps/pages/manage_service_requests.php" style="display:flex; gap:8px; flex-wrap:wrap; margin:0 15px; width:50%;">
                                             <input type="hidden" name="request_id" value="<?php echo (int)$request['id']; ?>">
-                                            <button type="submit" name="action" value="approve" style="background:#15803d; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Approve</button>
-                                            <button type="submit" name="action" value="reject" style="background:#b91c1c; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Reject</button>
+                                            <button type="submit" name="action" value="approve" style="background:#15803d; max-width:80px; margin:0; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Approve</button>
+                                            <button type="submit" name="action" value="reject" style="background:#b91c1c; max-width:80px; margin:0; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-weight:700;">Reject</button>
                                         </form>
                                     <?php elseif (!empty($request['approved_workorder_id'])): ?>
-                                        <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['approved_workorder_id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"> View <?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['approved_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
+                                        <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['approved_workorder_id']; ?>" style="color:#007BFF; text-decoration:none; margin-left:15px; font-weight:700;"> Review <?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['approved_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
                                     <?php endif; ?>
                                 </div>
                             </td>
