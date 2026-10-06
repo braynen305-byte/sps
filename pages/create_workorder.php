@@ -8,6 +8,15 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || !in_arr
 }
 
 require_once '../includes/dbh.inc.php';
+require_once '../includes/customer_assets.inc.php';
+require_once '../includes/workorder_technicians.inc.php';
+require_once '../includes/notifications.php';
+ensure_customer_asset_schema($conn);
+ensure_workorder_technicians_schema($conn);
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 
 // ensure priority column exists
 try {
@@ -20,7 +29,11 @@ try {
     $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `order_number` VARCHAR(100) DEFAULT NULL");
     $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `service_type` VARCHAR(100) DEFAULT NULL");
     $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `equipment_details` VARCHAR(255) DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `work_location` VARCHAR(30) DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `service_call_fee` DECIMAL(10,2) NOT NULL DEFAULT 0");
     $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `special_instructions` LONGTEXT DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `permission_time_relation` VARCHAR(10) DEFAULT NULL");
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS `permission_anytime_with_time` TINYINT(1) NOT NULL DEFAULT 0");
 } catch (Exception $ex) {
     // ignore
 }
@@ -47,13 +60,19 @@ require_once '../includes/header.php';
 $message = '';
 $messageType = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !hash_equals($_SESSION['csrf_token'], (string)($_POST['csrf_token'] ?? ''))) {
+    $message = 'Your session could not be verified. Please reload the form and try again.';
+    $messageType = 'error';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $customerId = (int)($_POST['customer_id'] ?? 0);
+    $assetId = (int)($_POST['asset_id'] ?? 0);
     $clientName = trim($_POST['client_name'] ?? '');
     $clientPhone = trim($_POST['client_phone'] ?? '');
     $location = trim($_POST['location'] ?? '');
+    $workLocation = trim((string)($_POST['work_location'] ?? 'customer_property'));
     $orderDate = $_POST['order_date'] ?? '';
     $serviceType = trim($_POST['service_type'] ?? '');
+    $serviceCallFee = ($serviceType === 'Service Call' && $workLocation === 'customer_property') ? '75.00' : '0.00';
     $equipmentDetails = trim($_POST['equipment_details'] ?? '');
     $specialInstructions = trim($_POST['special_instructions'] ?? '');
     $expectedStartDate = $_POST['expected_start_date'] ?? '';
@@ -63,36 +82,94 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $workDescription = trim($_POST['work_description'] ?? '');
     $vesselVin = trim($_POST['vessel_vin'] ?? '');
     $vesselHours = trim($_POST['vessel_hours'] ?? '');
-    $laborTime = trim($_POST['labor_time'] ?? '');
+    $laborTime = '0h 00m';
     $partsCost = trim($_POST['parts_cost'] ?? '');
     $chargeableTo = trim($_POST['chargeable_to'] ?? '');
     $orderReceivedBy = $_POST['order_received_by'] ?? $_SESSION['user_id'];
     $workPerformedBy = $_POST['work_performed_by'] ?? '';
+    $additionalTechnicianIds = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['additional_technicians'] ?? [])))));
     $priority = $_POST['priority'] ?? 'Normal';
     $orderNumber = normalizeWorkOrderNumber($_POST['order_number'] ?? '');
     $permissionAnytime = isset($_POST['permission_anytime']) ? 1 : 0;
     $permissionDate = $_POST['permission_date'] ?? '';
     $permissionTime = $_POST['permission_time'] ?? '';
-    $entryDate = $_POST['entry_date'] ?? '';
-    $timeEntered = $_POST['time_entered'] ?? '';
-    $timeDeparted = $_POST['time_departed'] ?? '';
+    $permissionTimeChoice = ($_POST['permission_time_choice'] ?? 'no') === 'yes';
+    if (!$permissionTimeChoice || trim((string)$permissionTime) === '') {
+        $permissionTime = '';
+    }
+    if ($permissionAnytime) {
+        $permissionDate = '';
+    }
+    $permissionAnytimeWithTime = ($permissionAnytime && $permissionTimeChoice && trim((string)$permissionTime) !== '') ? 1 : 0;
+    $permissionTimeRelation = strtolower(trim((string)($_POST['permission_time_relation'] ?? '')));
+    if (!in_array($permissionTimeRelation, ['at', 'before', 'after'], true)) {
+        $permissionTimeRelation = '';
+    }
+    if (trim((string)$permissionTime) === '' || !$permissionTimeChoice) {
+        $permissionTimeRelation = '';
+    }
+
+    $selectedAsset = null;
+    if ($assetId > 0 && $customerId > 0) {
+        $assetStmt = $conn->prepare('SELECT * FROM customer_assets WHERE id = ? AND customer_id = ? LIMIT 1');
+        $assetStmt->execute([$assetId, $customerId]);
+        $selectedAsset = $assetStmt->fetch(PDO::FETCH_ASSOC);
+        if ($selectedAsset) {
+            $equipmentDetails = customer_asset_name_label($selectedAsset);
+            $vesselVin = trim((string)($selectedAsset['serial_number'] ?? '')) ?: $vesselVin;
+            $vesselHours = ($selectedAsset['hours'] !== null && $selectedAsset['hours'] !== '') ? (string)$selectedAsset['hours'] : $vesselHours;
+        }
+    }
+
+    $validAdditionalTechnicians = true;
+    foreach ($additionalTechnicianIds as $additionalTechnicianId) {
+        if ($additionalTechnicianId <= 0 || $additionalTechnicianId === (int)$workPerformedBy) {
+            continue;
+        }
+        $additionalTechnicianCheck = $conn->prepare("SELECT id FROM staff WHERE id = ? AND LOWER(TRIM(COALESCE(role, ''))) IN ('admin', 'technician', 'staff', '') LIMIT 1");
+        $additionalTechnicianCheck->execute([$additionalTechnicianId]);
+        if (!$additionalTechnicianCheck->fetchColumn()) {
+            $validAdditionalTechnicians = false;
+            break;
+        }
+    }
 
     if ($clientName === '' || $location === '' || $orderDate === '') {
         $message = 'Please fill in required fields: Client Name, Location, and Order Date.';
+        $messageType = 'error';
+    } elseif (!in_array($workLocation, ['shop', 'customer_property'], true)) {
+        $message = 'Select where the work will be performed.';
+        $messageType = 'error';
+    } elseif (!$validAdditionalTechnicians) {
+        $message = 'Select only valid staff members as additional technicians.';
+        $messageType = 'error';
+    } elseif ($assetId > 0 && !$selectedAsset) {
+        $message = 'The selected asset does not belong to the chosen customer.';
+        $messageType = 'error';
+    } elseif (!in_array((string)($_POST['permission_time_choice'] ?? ''), ['yes', 'no'], true)) {
+        $message = 'Please indicate whether a permission time should be set.';
+        $messageType = 'error';
+    } elseif ($permissionTimeChoice && trim((string)($_POST['permission_time'] ?? '')) === '') {
+        $message = 'Please enter the permission time, or choose “No specific time.”';
         $messageType = 'error';
     } else {
         try {
             $stmt = $conn->prepare('
 
                 INSERT INTO workorders (
-                    customer_id, client_name, client_phone, location, order_date, 
-                    service_type, equipment_details, special_instructions,
+                    customer_id, asset_id, client_name, client_phone, location, order_date,
+                    work_location, service_call_fee, service_type, equipment_details, special_instructions,
                     expected_start_date, expected_end_date, requested_work, 
                     additional_comments, work_description, vessel_vin, vessel_hours, labor_time, 
                     parts_cost, chargeable_to, order_received_by, work_performed_by,
-                    permission_anytime, permission_date, permission_time,
-                    entry_date, time_entered, time_departed, priority, order_number, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                    permission_anytime, permission_anytime_with_time, permission_date, permission_time,
+                    permission_time_relation, priority, order_number, created_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    NOW()
+                )
             ');
             
                 if (!empty($workPerformedBy)) {
@@ -100,23 +177,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $techCheck->execute([(int)$workPerformedBy]);
                     $techRow = $techCheck->fetch(PDO::FETCH_ASSOC);
                     $techRole = strtolower(trim((string)($techRow['role'] ?? '')));
-                    if (!$techRow || !in_array($techRole, ['technician', 'staff', ''], true)) {
+                    if (!$techRow || !in_array($techRole, ['admin', 'technician', 'staff', ''], true)) {
                         $workPerformedBy = null;
                     }
                 }
 
                 $result = $stmt->execute([
-                $customerId ?: null, $clientName, $clientPhone, $location, $orderDate,
-                $serviceType, $equipmentDetails, $specialInstructions,
+                $customerId ?: null, $selectedAsset ? (int)$selectedAsset['id'] : null, $clientName, $clientPhone, $location, $orderDate,
+                $workLocation, $serviceCallFee, $serviceType, $equipmentDetails, $specialInstructions,
                 $expectedStartDate ?: null, $expectedEndDate ?: null, $requestedWork,
                 $additionalComments, $workDescription, $vesselVin, $vesselHours, $laborTime,
                 $partsCost ?: null, $chargeableTo, $orderReceivedBy, $workPerformedBy ?: null,
-                $permissionAnytime, $permissionDate ?: null, $permissionTime ?: null,
-                $entryDate ?: null, $timeEntered ?: null, $timeDeparted ?: null, $priority ?: 'Normal', $orderNumber
+                $permissionAnytime, $permissionAnytimeWithTime, $permissionDate ?: null, $permissionTime ?: null,
+                $permissionTimeRelation ?: null, $priority ?: 'Normal', $orderNumber
             ]);
 
                 if ($result) {
                 $workOrderId = (int)$conn->lastInsertId();
+                    if (!empty($workPerformedBy)) {
+                        sync_primary_workorder_technician($conn, $workOrderId, $workPerformedBy);
+                    }
+                    $saveAdditionalTechnician = $conn->prepare('INSERT IGNORE INTO workorder_technicians (workorder_id, technician_id, assigned_by) VALUES (?, ?, ?)');
+                    foreach ($additionalTechnicianIds as $additionalTechnicianId) {
+                        if ($additionalTechnicianId <= 0 || $additionalTechnicianId === (int)$workPerformedBy) {
+                            continue;
+                        }
+                        $saveAdditionalTechnician->execute([$workOrderId, $additionalTechnicianId, (int)($_SESSION['user_id'] ?? 0) ?: null]);
+                    }
+                    $assignedTechnicianIds = array_values(array_unique(array_filter(array_merge(
+                        [(int)$workPerformedBy],
+                        $additionalTechnicianIds
+                    ))));
+                    $workOrderLabel = $orderNumber ?: ('WO' . str_pad((string)$workOrderId, 4, '0', STR_PAD_LEFT));
+                    foreach ($assignedTechnicianIds as $assignedTechnicianId) {
+                        try {
+                            notify_assigned_technician($conn, $workOrderId, $assignedTechnicianId, $workOrderLabel);
+                        } catch (Throwable $notificationError) {
+                            error_log('Work-order assignment notification failed: ' . $notificationError->getMessage());
+                        }
+                    }
                 try {
                     $conn->exec("CREATE TABLE IF NOT EXISTS workorder_edits (
                         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -161,13 +260,27 @@ foreach ($staff as $person) {
     }
 }
 $customers = $conn->query('SELECT id, name, phone, address FROM customers ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
+$allCustomerAssets = $conn->query('SELECT * FROM customer_assets ORDER BY customer_id, asset_name, id')->fetchAll(PDO::FETCH_ASSOC);
 $currentRole = strtolower($_SESSION['role'] ?? '');
 $customerData = [];
 foreach ($customers as $cust) {
+    $assetsForCustomer = [];
+    foreach ($allCustomerAssets as $asset) {
+        if ((int)$asset['customer_id'] === (int)$cust['id']) {
+            $assetsForCustomer[] = [
+                'id' => (int)$asset['id'],
+                'label' => customer_asset_selection_label($asset),
+                'details' => customer_asset_name_label($asset),
+                'serial' => (string)($asset['serial_number'] ?? ''),
+                'hours' => (string)($asset['hours'] ?? '')
+            ];
+        }
+    }
     $customerData[(int)$cust['id']] = [
         'name' => (string)($cust['name'] ?? ''),
         'phone' => (string)($cust['phone'] ?? ''),
-        'address' => (string)($cust['address'] ?? '')
+        'address' => (string)($cust['address'] ?? ''),
+        'assets' => $assetsForCustomer
     ];
 }
 ?>
@@ -316,6 +429,7 @@ function populateCustomerFields(selectedId) {
     const nameField = document.querySelector('input[name="client_name"]');
     const phoneField = document.querySelector('input[name="client_phone"]');
     const locationField = document.querySelector('input[name="location"]');
+    const assetSelect = document.getElementById('customer_asset_id');
 
     if (!nameField || !phoneField || !locationField) {
         return;
@@ -325,25 +439,64 @@ function populateCustomerFields(selectedId) {
         nameField.value = '';
         phoneField.value = '';
         locationField.value = '';
+        const equipmentField = document.getElementById('equipment_details');
+        const serialField = document.querySelector('input[name="vessel_vin"]');
+        const hoursField = document.querySelector('input[name="vessel_hours"]');
+        if (equipmentField) equipmentField.value = '';
+        if (serialField) serialField.value = '';
+        if (hoursField) hoursField.value = '';
+        if (assetSelect) assetSelect.innerHTML = '<option value="">-- Select a customer first --</option>';
         return;
     }
 
     nameField.value = selected.name || '';
     phoneField.value = selected.phone || '';
     locationField.value = selected.address || '';
+    const equipmentField = document.getElementById('equipment_details');
+    const serialField = document.querySelector('input[name="vessel_vin"]');
+    const hoursField = document.querySelector('input[name="vessel_hours"]');
+    if (equipmentField) equipmentField.value = '';
+    if (serialField) serialField.value = '';
+    if (hoursField) hoursField.value = '';
+    if (assetSelect) {
+        assetSelect.innerHTML = '<option value="">-- Enter details manually / None --</option>';
+        (selected.assets || []).forEach(function (asset) {
+            const option = document.createElement('option');
+            option.value = String(asset.id);
+            option.textContent = asset.label;
+            option.dataset.details = asset.details;
+            option.dataset.serial = asset.serial;
+            option.dataset.hours = asset.hours;
+            assetSelect.appendChild(option);
+        });
+        assetSelect.value = '';
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function () {
     const customerSelect = document.querySelector('select[name="customer_id"]');
+    const assetSelect = document.getElementById('customer_asset_id');
     if (customerSelect) {
         customerSelect.addEventListener('change', function () {
             populateCustomerFields(this.value);
+        });
+    }
+    if (assetSelect) {
+        assetSelect.addEventListener('change', function () {
+            const option = this.options[this.selectedIndex];
+            const equipmentField = document.getElementById('equipment_details');
+            const serialField = document.querySelector('input[name="vessel_vin"]');
+            const hoursField = document.querySelector('input[name="vessel_hours"]');
+            if (equipmentField) equipmentField.value = this.value && option ? (option.dataset.details || '') : '';
+            if (serialField) serialField.value = this.value && option ? (option.dataset.serial || '') : '';
+            if (hoursField) hoursField.value = this.value && option ? (option.dataset.hours || '') : '';
         });
     }
 });
 </script>
 
 <form method="post" class="work-order-form">
+    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
     <!-- Header Section -->
     <div class="form-section">
         <h3>CLIENT INFORMATION</h3>
@@ -425,18 +578,31 @@ document.addEventListener('DOMContentLoaded', function () {
                 </label>
             </div>
         </div>
-        <div class="form-row">
+        <div class="form-row three">
             <div class="form-group">
                 <label for="service_type" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Service Type</label>
                     <select name="service_type" id="service_type" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
                         <?php foreach (['Repair','Inspection','Maintenance','Installation','Service Call','Other'] as $opt): ?>
-                            <option value="<?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?>" <?php echo ($request['service_type'] ?? '') === $opt ? 'selected' : ''; ?>><?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?></option>
+                            <option value="<?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?></option>
                         <?php endforeach; ?>
                     </select>
             </div>
             <div class="form-group">
-                <label>Vessel / Asset</label>
-                <input type="text" name="equipment_asset" placeholder="Boat, motor, unit, model or equipment">
+                <label for="work_location">Work Performed At</label>
+                <select name="work_location" id="work_location">
+                    <option value="customer_property" selected>Customer Property</option>
+                    <option value="shop">Our Shop</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Customer Vessel / Asset</label>
+                <select name="asset_id" id="customer_asset_id">
+                    <option value="">-- Select a customer first --</option>
+                </select>
+                <small><a href="/sps/pages/manage_customers.php">Manage customer records</a></small>
+                <label style="margin-top:8px;">Asset Details (manual / unsaved)<br>
+                    <input type="text" name="equipment_details" id="equipment_details" placeholder="Boat, motor, unit, model or equipment">
+                </label>
             </div>
             
         
@@ -455,41 +621,41 @@ document.addEventListener('DOMContentLoaded', function () {
 
     <!-- Permission to Enter -->
     <div class="form-section">
-        <h3>PERMISSION TO ENTER SPACE</h3>
+        <h3>PROPERTY ENTRY PERMISSIONS / LOGS</h3>
+        <p style="margin:0 0 14px; color:#64748b;">Set access permission here. Record actual entry and departure times later in the work order's Property Entry Permissions / Logs section.</p>
         <div class="form-row full">
             <div class="form-group">
-                <label><input type="checkbox" name="permission_anytime"> Anytime</label>
+                <label><input type="checkbox" name="permission_anytime" id="permission_anytime"> Permission Anytime (any date)</label>
             </div>
         </div>
         <div class="form-row">
             <div class="form-group">
                 <label>By Appointment - Date</label>
-                <input type="date" name="permission_date">
-            </div>
-            <div class="form-group">
-                <label>Time</label>
-                <input type="time" name="permission_time">
-            </div>
-        </div>
-    </div>
-
-    <!-- Property Entry Notice -->
-    <div class="form-section">
-        <h3>PROPERTY ENTRY NOTICE</h3>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Entry Date</label>
-                <input type="date" name="entry_date">
-            </div>
-            <div class="form-group">
-                <label>Time Entered</label>
-                <input type="time" name="time_entered">
+                <input type="date" name="permission_date" id="permission_date">
             </div>
         </div>
         <div class="form-row full">
             <div class="form-group">
-                <label>Time Departed</label>
-                <input type="time" name="time_departed">
+                <label for="permission_time_choice" id="permission-time-question">Would you like to specify a permission time?</label>
+                <select name="permission_time_choice" id="permission_time_choice" required>
+                    <option value="" selected>-- Choose Yes or No --</option>
+                    <option value="no">No specific time</option>
+                    <option value="yes">Yes, specify a time</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row" id="permission-time-details" style="display:none;">
+            <div class="form-group">
+                <label for="permission_time">Permission Time</label>
+                <input type="time" name="permission_time" id="permission_time">
+            </div>
+            <div class="form-group">
+                <label for="permission_time_relation">Timing</label>
+                <select name="permission_time_relation" id="permission_time_relation">
+                    <option value="at">At the set time</option>
+                    <option value="before">Before the set time</option>
+                    <option value="after">After the set time</option>
+                </select>
             </div>
         </div>
     </div>
@@ -509,6 +675,12 @@ document.addEventListener('DOMContentLoaded', function () {
                 <textarea name="additional_comments"></textarea>
             </div>
         </div>
+        <div class="form-row full">
+    <div class="form-group">
+        <label>Special Instructions</label>
+        <textarea name="special_instructions" placeholder="Access notes, gate codes, customer instructions, etc."></textarea>
+    </div>
+</div>
     </div>
 
     <!-- Work Performed -->
@@ -526,6 +698,17 @@ document.addEventListener('DOMContentLoaded', function () {
                     <?php endforeach; ?>
                 </select>
             </div>
+            <div class="form-group">
+                <label>Additional Technicians (optional)</label>
+                <select name="additional_technicians[]" multiple size="4" style="min-height:96px;">
+                    <?php foreach ($technicians as $tech): ?>
+                        <?php if ((int)$tech['id'] !== (int)($_POST['work_performed_by'] ?? 0)): ?>
+                            <option value="<?php echo (int)$tech['id']; ?>" <?php echo in_array((int)$tech['id'], array_map('intval', (array)($_POST['additional_technicians'] ?? [])), true) ? 'selected' : ''; ?>><?php echo htmlspecialchars($tech['firstname'] . ' ' . $tech['lastname'], ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+                </select>
+                <small>Select multiple technicians with Ctrl-click (Windows) or Command-click (Mac).</small>
+            </div>
             <?php if ($currentRole !== 'office'): ?>
             <div class="form-group">
                 <label>Vessel(Unit) identification #</label>
@@ -540,14 +723,10 @@ document.addEventListener('DOMContentLoaded', function () {
     <!-- Costs and Hours -->
     <div class="form-section">
         <h3>COSTS AND LABOR</h3>
-        <div class="form-row three">
+        <div class="form-row">
             <div class="form-group">
                 <label>Vessel Hours</label>
                 <input type="number" name="vessel_hours" step="0.5">
-            </div>
-            <div class="form-group">
-                <label>Labor Time</label>
-                <input type="text" name="labor_time" placeholder="e.g., 2 hours">
             </div>
             <div class="form-group">
                 <label>Parts/Material Cost ($)</label>
@@ -570,5 +749,42 @@ document.addEventListener('DOMContentLoaded', function () {
         </div>
     </div>
 </form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const anytime = document.getElementById('permission_anytime');
+    const dateField = document.getElementById('permission_date');
+    const dateFieldGroup = dateField ? dateField.closest('.form-group') : null;
+    const timeChoice = document.getElementById('permission_time_choice');
+    const timeQuestion = document.getElementById('permission-time-question');
+    const timeDetails = document.getElementById('permission-time-details');
+    const permissionTime = document.getElementById('permission_time');
+    const timeRelation = document.getElementById('permission_time_relation');
+
+    function updatePermissionTimeFields() {
+        const isAnytime = anytime && anytime.checked;
+        const wantsTime = timeChoice && timeChoice.value === 'yes';
+        if (dateFieldGroup) {
+            dateFieldGroup.style.display = isAnytime ? 'none' : '';
+            if (isAnytime) dateField.value = '';
+        }
+        if (timeQuestion) {
+            timeQuestion.textContent = isAnytime
+                ? 'Would you like to include a specific time with Anytime permission?'
+                : 'Would you like to specify a permission time?';
+        }
+        if (timeDetails) timeDetails.style.display = wantsTime ? '' : 'none';
+        if (permissionTime) permissionTime.required = wantsTime;
+        if (!wantsTime) {
+            if (permissionTime) permissionTime.value = '';
+            if (timeRelation) timeRelation.value = 'at';
+        }
+    }
+
+    if (anytime) anytime.addEventListener('change', updatePermissionTimeFields);
+    if (timeChoice) timeChoice.addEventListener('change', updatePermissionTimeFields);
+    updatePermissionTimeFields();
+});
+</script>
 
 <?php require_once '../includes/footer.php'; ?>

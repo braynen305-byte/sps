@@ -7,6 +7,12 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolo
 
 require_once '../includes/dbh.inc.php';
 require_once '../includes/notifications.php';
+require_once '../includes/customer_assets.inc.php';
+
+ensure_customer_asset_schema($conn);
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 
 try {
     $existingColumns = $conn->query("SHOW COLUMNS FROM customer_service_requests")->fetchAll(PDO::FETCH_COLUMN);
@@ -33,6 +39,7 @@ try {
     $conn->exec("CREATE TABLE IF NOT EXISTS customer_service_requests (
         id INT AUTO_INCREMENT PRIMARY KEY,
         customer_id INT NOT NULL,
+        asset_id INT DEFAULT NULL,
         request_number VARCHAR(30) DEFAULT NULL,
         service_type VARCHAR(100) NOT NULL,
         location VARCHAR(255) NOT NULL,
@@ -51,6 +58,8 @@ try {
         INDEX(customer_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 }
+
+ensure_customer_asset_schema($conn);
 
 try {
     $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS request_number VARCHAR(30) DEFAULT NULL");
@@ -71,20 +80,41 @@ $messageType = 'error';
 $customerProfile = $conn->prepare('SELECT id, name, phone, address, city, state, zip FROM customers WHERE id = ? LIMIT 1');
 $customerProfile->execute([$customerId]);
 $customerProfile = $customerProfile->fetch(PDO::FETCH_ASSOC);
+$assetsStmt = $conn->prepare('SELECT * FROM customer_assets WHERE customer_id = ? ORDER BY asset_name, id');
+$assetsStmt->execute([$customerId]);
+$customerAssets = $assetsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!hash_equals($_SESSION['csrf_token'], (string)($_POST['csrf_token'] ?? ''))) {
+        $message = 'Your session could not be verified. Please reload the page and try again.';
+        $messageType = 'error';
+    } else {
     $serviceType = trim((string)($_POST['service_type'] ?? ''));
     $location = trim((string)($_POST['location'] ?? ''));
     $preferredDate = trim((string)($_POST['preferred_date'] ?? ''));
     $preferredEndDate = trim((string)($_POST['preferred_end_date'] ?? ''));
     $customerPhone = trim((string)($_POST['customer_phone'] ?? ''));
     $urgency = trim((string)($_POST['urgency'] ?? 'Normal'));
+    $assetId = (int)($_POST['asset_id'] ?? 0);
     $equipmentDetails = trim((string)($_POST['equipment_details'] ?? ''));
+    $selectedAsset = null;
+    if ($assetId > 0) {
+        $assetStmt = $conn->prepare('SELECT * FROM customer_assets WHERE id = ? AND customer_id = ? LIMIT 1');
+        $assetStmt->execute([$assetId, $customerId]);
+        $selectedAsset = $assetStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$selectedAsset) {
+            $message = 'Choose a vessel or asset saved to your own profile.';
+        } else {
+            $equipmentDetails = customer_asset_name_label($selectedAsset);
+        }
+    }
     $problemSummary = trim((string)($_POST['problem_summary'] ?? ''));
     $description = trim((string)($_POST['description'] ?? ''));
     $specialInstructions = trim((string)($_POST['special_instructions'] ?? ''));
 
-    if ($serviceType === '' || $location === '' || $problemSummary === '' || $description === '') {
+    if ($message !== '') {
+        $messageType = 'error';
+    } elseif ($serviceType === '' || $location === '' || $problemSummary === '' || $description === '') {
         $message = 'Please provide the service type, service location, brief problem summary, and detailed description of the issue.';
     } else {
         $sameRequestFingerprint = md5(implode('|', [
@@ -96,9 +126,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             strtolower(trim((string)$description)),
         ]));
 
-        $existingRequest = $conn->prepare('SELECT id, status FROM customer_service_requests WHERE customer_id = ? AND status IN (\'Pending\', \'Accepted\') AND service_type = ? AND location = ? AND COALESCE(problem_summary, \'\') = ? AND COALESCE(description, \'\') = ? LIMIT 1');
+        $existingRequest = $conn->prepare('SELECT id, status FROM customer_service_requests WHERE customer_id = ? AND COALESCE(asset_id, 0) = ? AND status IN (\'Pending\', \'Accepted\') AND service_type = ? AND location = ? AND COALESCE(problem_summary, \'\') = ? AND COALESCE(description, \'\') = ? LIMIT 1');
         $existingRequest->execute([
             $customerId,
+            $selectedAsset ? (int)$selectedAsset['id'] : 0,
             $serviceType,
             $location,
             $problemSummary,
@@ -121,6 +152,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (in_array('urgency', $schemaColumns, true)) {
             $insertFields[] = 'urgency';
             $insertValues[] = $urgency !== '' ? $urgency : 'Normal';
+        }
+        if (in_array('asset_id', $schemaColumns, true)) {
+            $insertFields[] = 'asset_id';
+            $insertValues[] = $selectedAsset ? (int)$selectedAsset['id'] : null;
         }
         if (in_array('equipment_details', $schemaColumns, true)) {
             $insertFields[] = 'equipment_details';
@@ -173,6 +208,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = 'Unable to submit your service request right now. Please try again.';
         }
     }
+    }
 }
 
 $title = 'Request New Service';
@@ -191,6 +227,7 @@ require_once '../includes/header.php';
         <?php endif; ?>
 
         <form method="post" action="/sps/pages/customer_request_job.php">
+            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px;">
                 <div>
                     <label for="service_type" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Service Type</label>
@@ -231,8 +268,18 @@ require_once '../includes/header.php';
                 </div>
 
                 <div>
-                    <label for="equipment_details" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Equipment / Asset Details</label>
-                    <input type="text" name="equipment_details" id="equipment_details" placeholder="Boat, motor, unit, model, or equipment name" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
+                    <label for="asset_id" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Vessel / Asset</label>
+                    <select name="asset_id" id="asset_id" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
+                        <option value="">Enter asset details manually / No saved asset</option>
+                        <?php foreach ($customerAssets as $asset): ?>
+                            <option value="<?php echo (int)$asset['id']; ?>" <?php echo (int)($_POST['asset_id'] ?? 0) === (int)$asset['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars(customer_asset_selection_label($asset), ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small style="display:block; margin-top:5px; color:#64748b;"><a href="/sps/pages/customer_profile.php">Manage your saved vessels and assets</a></small>
+                </div>
+                <div id="manual-asset-details" style="<?php echo !empty($_POST['asset_id']) ? 'display:none;' : ''; ?>">
+                    <label for="equipment_details" style="display:block; font-weight:700; margin-bottom:6px; color:#334155;">Asset Details (if not saved)</label>
+                    <input type="text" name="equipment_details" id="equipment_details" value="<?php echo htmlspecialchars($_POST['equipment_details'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" placeholder="Boat, motor, unit, model, or equipment name" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box;">
                 </div>
             </div>
 
@@ -263,5 +310,15 @@ require_once '../includes/header.php';
         </form>
     </div>
 </div>
+
+<script>
+const assetSelector = document.getElementById('asset_id');
+const manualAssetDetails = document.getElementById('manual-asset-details');
+if (assetSelector && manualAssetDetails) {
+    assetSelector.addEventListener('change', function () {
+        manualAssetDetails.style.display = this.value ? 'none' : '';
+    });
+}
+</script>
 
 <?php require_once '../includes/footer.php'; ?>

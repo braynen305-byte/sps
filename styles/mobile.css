@@ -1,0 +1,494 @@
+/* Mobile/tablet-only overrides. Desktop layouts remain governed by main.css and page styles. */
+.nav-menu-toggle { display: none; }
+
+@media (max-width: 900px) {
+    nav {
+        position: sticky;
+        top: 0;
+        height: auto;
+    }
+
+    .nav-shell {
+        height: 52px;
+        min-height: 52px;
+        min-width: 0;
+        padding: 0 12px;
+        gap: 10px;
+        flex-wrap: nowrap;
+        justify-content: space-between;
+    }
+
+    .nav-menu-toggle {
+        display: inline-flex;
+        flex: 0 0 40px;
+        width: 40px;
+        height: 40px;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        padding: 0;
+        border: 1px solid rgba(255,255,255,.22);
+        border-radius: 9px;
+        background: rgba(255,255,255,.08);
+        color: #fff;
+        cursor: pointer;
+    }
+    .nav-menu-toggle:hover,
+    .nav-menu-toggle[aria-expanded="true"] { background: rgba(255,255,255,.17); }
+
+    .nav-main-links {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 1200;
+        display: none;
+        width: 100%;
+        height: auto;
+        max-height: calc(100vh - 60px);
+        overflow-y: auto;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: flex-start;
+        margin: 0;
+        padding: 8px 10px 12px;
+        background: linear-gradient(180deg, #123d71 0%, #0c2d52 100%);
+        box-shadow: 0 14px 24px rgba(8,19,35,.3);
+        min-width: 0;
+        max-width: 100%;
+        gap: 3px;
+    }
+    .site-nav.is-mobile-menu-open .nav-main-links { display: flex; }
+    .nav-main-links li { width: 100%; }
+
+    .nav-main-links a {
+        width: 100%;
+        justify-content: flex-start;
+        padding: 11px 12px;
+        font-size: .7rem;
+    }
+    .nav-profile-menu:hover .nav-profile-dropdown,
+    .nav-profile-menu:focus-within .nav-profile-dropdown { display: none; }
+    .nav-profile-menu.is-open .nav-profile-dropdown { display: flex; }
+
+    .nav-profile-menu {
+        min-width: 0;
+        width: auto;
+        height: auto;
+        margin-left: auto;
+        flex: 0 0 auto;
+        align-self: center;
+    }
+    .nav-profile-button {
+        width: 40px;
+        min-width: 40px;
+        height: 40px;
+        justify-content: center;
+        padding: 0;
+        border-radius: 50%;
+    }
+    .nav-user-name { display: none; }
+    .nav-profile-dropdown { right: 0; }
+    .hero-image { height: 132px; }
+    .nav-notification-dropdown { max-width: calc(100vw - 20px); }
+}
+
+@media (max-width: 760px) {
+    html, body { max-width: 100%; }
+    .page-body { min-width: 0; width: 100%; padding-bottom: 36px; }
+
+    .page-body > h1,
+    .page-body > h2,
+    .page-body > h3,
+    .page-body > p,
+    .page-body > .greeting,
+    .page-body > .subtitle,
+    .page-body > .no-results {
+        margin-left: 14px !important;
+        margin-right: 14px !important;
+        max-width: calc(100% - 28px);
+        box-sizing: border-box;
+    }
+
+    .page-body > div[style*="max-width"],
+    .page-body > main,
+    .page-body > section {
+        width: 100% !important;
+        max-width: 100%;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+        box-sizing: border-box;
+    }
+
+    .page-header,
+    .staff-page-header {
+        width: calc(100% - 28px) !important;
+        max-width: none !important;
+        margin: 18px 14px !important;
+        padding: 0 !important;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .form-row,
+    .form-row.three,
+    .add-staff .grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .form-row.full,
+    .add-staff .full { grid-column: 1 / -1; }
+
+    .form-buttons { flex-wrap: wrap; }
+    .form-buttons button { flex: 1 1 140px; }
+
+    /* Compact navigation controls remain tappable without forcing page width. */
+    button { max-width: 100%; }
+    .panel-toggle { width: auto !important; flex: 0 0 auto; }
+
+    /* Tables keep their columns readable and scroll inside their own viewport. */
+    .page-body table {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .tech-wo-table-wrap {
+        width: calc(100% - 24px) !important;
+        max-width: none !important;
+        margin: 16px 12px 24px !important;
+        overflow-x: auto !important;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .tech-wo-table { min-width: 980px !important; width: 980px !important; }
+    .service-requests-table-scroll {
+        max-width: 100%;
+        overflow: visible;
+    }
+    .service-requests-table-scroll .service-request-table {
+        display:block;
+        width:100% !important;
+        min-width:0 !important;
+        max-width:100% !important;
+        overflow:visible !important;
+        border-collapse:separate !important;
+        border-spacing:0;
+    }
+    .service-request-table thead { display:none; }
+    .service-request-table tbody { display:grid; gap:10px; padding:10px; }
+    .service-request-table .service-request-row {
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:4px 10px;
+        padding:10px !important;
+        border:1px solid #e2e8f0 !important;
+        border-radius:9px;
+        background:#fff;
+        box-shadow:0 2px 7px rgba(15,23,42,.05);
+    }
+    .service-request-table .service-request-row.service-request-unread { background:#eff6ff; }
+    .service-request-table .service-request-row > td {
+        display:block;
+        width:auto !important;
+        max-width:none !important;
+        min-width:0;
+        padding:3px 2px !important;
+        border:0 !important;
+        overflow-wrap:anywhere;
+        white-space:normal;
+        font-size:12px !important;
+        line-height:1.35 !important;
+    }
+    .service-request-table .sr-number-cell { grid-column:1; grid-row:1; align-self:center; }
+    .service-request-table .sr-status-cell { grid-column:2; grid-row:1; justify-self:end; align-self:center; text-align:right; white-space:nowrap; }
+    .service-request-table .sr-status-cell > span { display:inline-flex !important; align-items:center; white-space:nowrap; padding:3px 6px !important; font-size:10px !important; line-height:1 !important; }
+    .service-request-table .sr-customer-cell { grid-column:1 / -1; grid-row:2; color:#1f2937; font-weight:700; }
+    .service-request-table .sr-customer-cell span { overflow-wrap:anywhere; }
+    .service-request-table .sr-type-cell { grid-column:1 / -1; grid-row:3; }
+    .service-request-table .sr-type-cell::before { content:'Type: '; color:#64748b; font-weight:700; }
+    .service-request-table .sr-urgency-cell { grid-column:1 / -1; grid-row:4; text-align:left; }
+    .service-request-table .sr-urgency-cell::before { content:'Urgency: '; color:#64748b; font-weight:700; }
+    .service-request-table .sr-summary-cell { grid-column:1 / -1; grid-row:5; color:#334155; }
+    .service-request-table .sr-summary-cell::before { content:'Issue: '; color:#64748b; font-weight:700; }
+    .service-request-table .sr-actions-cell { grid-column:1 / -1; grid-row:6; justify-self:end; }
+    .service-request-table .sr-location-cell,
+    .service-request-table .sr-dates-cell,
+    .service-request-table .sr-details-cell { display:none !important; }
+    .service-request-table .service-request-actions-cell { position:static; right:auto; z-index:auto; width:auto !important; box-shadow:none; background:transparent; }
+    .service-request-table .service-request-actions { justify-content:flex-end; gap:7px; }
+    .service-request-table .service-request-icon-action { width:38px; height:38px; min-width:38px; flex-basis:38px; }
+    .staff-orders { min-width: 760px; }
+    #bulk-delete-form { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .customer-requests-table {
+        display:table !important;
+        width: 860px !important;
+        min-width: 860px !important;
+        max-width: none !important;
+        table-layout: auto !important;
+    }
+    .customer-workorders-table {
+        display:table !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        table-layout: fixed !important;
+        overflow: visible !important;
+    }
+    .customer-dashboard-card-header { flex-wrap: wrap !important; align-items: flex-start !important; }
+    .customer-dashboard-card-title { white-space: normal !important; }
+    .customer-dashboard-card-tools { flex-wrap: wrap !important; margin-left: 0 !important; }
+    .admin-dashboard-shell .dashboard-container table { min-width: 700px; }
+    .admin-workorders-page #bulk-delete-form {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        transform: none !important;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .admin-workorders-page .workorder-table {
+        display: table;
+        width: 1050px !important;
+        min-width: 1050px !important;
+        max-width: none !important;
+        overflow: visible;
+    }
+
+    /* Inline card grids used across older pages collapse to avoid narrow columns. */
+    div[style*="grid-template-columns"] {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .admin-dashboard-shell,
+    .staff-dashboard,
+    .admin-workorders-page,
+    .notifications-page {
+        width: 100% !important;
+        max-width: none !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+    }
+
+    .page-body > main.admin-dashboard-shell,
+    .page-body > main.staff-dashboard,
+    .page-body > main.admin-workorders-page,
+    .page-body > main.notifications-page {
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+    }
+
+    .office-dashboard {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 16px 0 28px !important;
+        padding: 0 14px !important;
+        box-sizing: border-box;
+    }
+    .office-section { margin-bottom: 16px; }
+    .office-section-body { padding: 12px; }
+    .office-table-scroll { max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .office-pending-requests-scroll table { display:table; width:640px !important; min-width:640px; }
+    .office-recent-orders-scroll table { display:table; width:1050px !important; min-width:1050px; }
+
+    .dashboard-header { align-items: stretch; }
+    .dashboard-header-actions { justify-content: flex-start; }
+    .filters { align-items: stretch; }
+    .filters > * { flex: 1 1 150px; min-width: 0; }
+
+    .dashboard-filter-toolbar { width: calc(100% - 24px) !important; flex-direction: column; align-items: stretch !important; }
+    .dashboard-filter-toolbar .filter-form,
+    .dashboard-filter-toolbar .search-form { width: 100%; flex-wrap: wrap; margin: 0 !important; }
+    .dashboard-filter-toolbar .search-form input { width: auto !important; min-width: 0 !important; flex: 1 1 180px; }
+
+    form.edit-form .client-order-grid,
+    form.edit-form .costs-grid,
+    form.edit-form .status-priority-row,
+    form.edit-form .work-performed-inputs,
+    form.edit-form .property-permission-grid .permission-time-fields,
+    form.edit-form .property-permission-grid .property-entry-add {
+        grid-template-columns: minmax(0, 1fr) !important;
+        grid-column: 1 / -1;
+        max-width: 100% !important;
+    }
+
+    .customer-profile-page .profile-card,
+    .customer-profile-page .profile-section { padding: 14px; }
+}
+
+@media (min-width: 761px) and (max-width: 900px) {
+    .service-requests-table-scroll { max-width:100%; overflow:visible; }
+    .service-requests-table-scroll .service-request-table {
+        display:block;
+        width:100% !important;
+        min-width:0 !important;
+        max-width:100% !important;
+        overflow:visible !important;
+        border-collapse:separate !important;
+        border-spacing:0;
+    }
+    .service-request-table thead { display:none; }
+    .service-request-table tbody { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:12px; }
+    .service-request-table .service-request-row {
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:5px 12px;
+        padding:12px !important;
+        border:1px solid #e2e8f0 !important;
+        border-radius:10px;
+        background:#fff;
+        box-shadow:0 2px 7px rgba(15,23,42,.05);
+    }
+    .service-request-table .service-request-row.service-request-unread { background:#eff6ff; }
+    .service-request-table .service-request-row > td {
+        display:block;
+        width:auto !important;
+        max-width:none !important;
+        min-width:0;
+        padding:3px 2px !important;
+        border:0 !important;
+        overflow-wrap:anywhere;
+        white-space:normal;
+        font-size:12px !important;
+        line-height:1.4 !important;
+    }
+    .service-request-table .sr-number-cell { grid-column:1; grid-row:1; align-self:center; }
+    .service-request-table .sr-status-cell { grid-column:2; grid-row:1; justify-self:end; align-self:center; text-align:right; white-space:nowrap; }
+    .service-request-table .sr-status-cell > span { display:inline-flex !important; align-items:center; white-space:nowrap; padding:3px 6px !important; font-size:10px !important; line-height:1 !important; }
+    .service-request-table .sr-customer-cell { grid-column:1 / -1; grid-row:2; color:#1f2937; font-weight:700; }
+    .service-request-table .sr-customer-cell span { overflow-wrap:anywhere; }
+    .service-request-table .sr-type-cell { grid-column:1 / -1; grid-row:3; }
+    .service-request-table .sr-type-cell::before { content:'Type: '; color:#64748b; font-weight:700; }
+    .service-request-table .sr-urgency-cell { grid-column:1 / -1; grid-row:4; }
+    .service-request-table .sr-urgency-cell::before { content:'Urgency: '; color:#64748b; font-weight:700; }
+    .service-request-table .sr-summary-cell { grid-column:1 / -1; grid-row:5; color:#334155; }
+    .service-request-table .sr-summary-cell::before { content:'Issue: '; color:#64748b; font-weight:700; }
+    .service-request-table .sr-actions-cell { grid-column:1 / -1; grid-row:6; justify-self:end; }
+    .service-request-table .sr-location-cell,
+    .service-request-table .sr-dates-cell,
+    .service-request-table .sr-details-cell { display:none !important; }
+    .service-request-table .service-request-actions-cell { position:static; width:auto !important; box-shadow:none; background:transparent; }
+    .service-request-table .service-request-actions { justify-content:flex-end; gap:7px; }
+    .service-request-table .service-request-icon-action { width:38px; height:38px; min-width:38px; flex-basis:38px; }
+    .page-body .service-request-mobile-hint { display:block !important; margin:0; padding:7px 12px; background:#f8fafc; color:#64748b; font-size:11px; }
+}
+
+@media (max-width: 600px) {
+    .nav-shell { padding: 0 10px; }
+    .hero-image { height: 108px; }
+
+    .page-body h1,
+    .page-body h2 {
+        max-width: 100%;
+        font-size: clamp(18px, 6vw, 24px) !important;
+        line-height: 1.16;
+        letter-spacing: -.02em;
+        text-wrap: balance;
+    }
+    .page-body h3 {
+        max-width: 100%;
+        font-size: clamp(16px, 5vw, 20px) !important;
+        line-height: 1.2;
+        text-wrap: balance;
+    }
+
+    .container,
+    .forgotcontainer,
+    .login-selection {
+        width: 100% !important;
+        max-width: none !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        box-sizing: border-box;
+    }
+    .container,
+    .forgotcontainer { padding-bottom: 16px; border-radius: 0; }
+    .container h1 { border-radius: 0; }
+
+    .page-body > div[style*="max-width"] {
+        width: 100% !important;
+        max-width: none !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 14px !important;
+        padding-right: 14px !important;
+        box-sizing: border-box;
+    }
+
+    .page-body p,
+    .page-body li,
+    .page-body .form-description {
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+
+    .login-selection {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 14px 0 24px !important;
+        padding: 20px 14px 24px !important;
+        border-radius: 0 !important;
+    }
+    .login-selection .login-options { width: 100% !important; margin-left: 0 !important; margin-right: 0 !important; }
+    .login-selection .login-card { width: 100% !important; max-width: none !important; padding: 15px !important; }
+    .customer-profile-page { width: 100% !important; margin: 18px 0 32px !important; padding: 0 12px !important; }
+    .customer-profile-page .profile-card { padding: 12px; }
+    .customer-profile-page .profile-section { padding: 12px; }
+    .customer-profile-page .notification-options { grid-template-columns: 1fr; }
+
+    .admin-stat-grid,
+    .staff-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .admin-stat-card,
+    .staff-stat { padding: 11px; }
+    .admin-stat-card strong,
+    .staff-stat strong { font-size: 23px; }
+
+    .dashboard-container h3,
+    .staff-panel h3 { padding: 11px 12px; }
+
+    .notification-item { align-items: flex-start; gap: 10px; }
+    .notification-content { overflow-wrap: anywhere; }
+
+    input, select, textarea { max-width: 100%; }
+    .action-links { flex-wrap: wrap; }
+}
+
+@media (max-width: 760px) {
+    .portal-login-page .hero { display: none; }
+    .portal-login-page #login-instructions { margin: 14px 12px 8px; font-size: 14px; }
+    .portal-login-page .container {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 12px 0 24px !important;
+        padding: 0 0 12px;
+        border-radius: 0;
+        box-shadow: none;
+    }
+    .portal-login-page .container h1 {
+        height: auto;
+        min-height: 45px;
+        padding: 8px 6px;
+        font-size: clamp(15px, 5.8vw, 19px);
+        line-height: 1.2;
+        text-align: center;
+    }
+    .portal-login-page .container form {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 14px 0 8px;
+        padding: 0 14px;
+        box-sizing: border-box;
+    }
+    .portal-login-page .container input:not([type="checkbox"]),
+    .portal-login-page .container select { min-height: 42px; }
+    .portal-login-page .container form > button { min-height: 42px; margin-bottom: 8px; }
+    .page-body .service-request-mobile-hint { display:block !important; margin:0; padding:7px 12px; background:#f8fafc; color:#64748b; font-size:11px; line-height:1.35; }
+}

@@ -97,8 +97,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, COALESCE(role, "staff") AS role FROM staff ORDER BY firstname, lastname')->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
-<h2>Manage Staff</h2>
-<p><a href="/sps/pages/admin_dashboard.php">Back to dashboard</a></p>
+<div class="staff-page-header">
+    <h2>Manage Staff</h2>
+    <a href="/sps/pages/admin_dashboard.php">← Back to dashboard</a>
+</div>
 
 <?php if ($message !== ''): ?>
     <p style="color: <?php echo $messageType === 'success' ? 'green' : 'red'; ?>;">
@@ -117,6 +119,10 @@ $staffList = $conn->query('SELECT id, firstname, middlename, lastname, email, CO
             .section-block.add { background:#ffffff; }
             .section-block.list { background:#fbfbff; }
             .staff-panel { max-width:1100px; margin:18px auto; }
+            .staff-page-header { max-width:1100px; margin:24px auto 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+            .staff-page-header h2 { margin:0; color:#0f172a; }
+            .staff-page-header a { color:#1d4ed8; text-decoration:none; font-weight:700; white-space:nowrap; }
+            @media (max-width:640px) { .staff-page-header { margin:20px 12px 12px; align-items:flex-start; flex-direction:column; } }
             .staff-panel .panel-header { background:#007BFF; color:#fff; padding:12px 16px; border-radius:10px 10px 0 0; }
             .staff-panel .panel-inner { background:#fff; padding:16px; border-radius:0 0 10px 10px; box-shadow:0 4px 12px rgba(0,0,0,0.04); }
             .add-staff { max-width:920px; margin:10px auto 22px; }

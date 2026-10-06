@@ -7,6 +7,8 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolo
 }
 
 require_once '../includes/dbh.inc.php';
+require_once '../includes/property_entry_logs.inc.php';
+ensure_property_entry_log_schema($conn);
 
 $adminName = trim($_SESSION['full_name'] ?? '');
 if ($adminName === '') {
@@ -67,76 +69,90 @@ try {
 $pendingServiceRequests = $conn->query(
     "SELECT r.*, c.name AS customer_name, c.email AS customer_email FROM customer_service_requests r LEFT JOIN customers c ON c.id = r.customer_id WHERE LOWER(COALESCE(r.status, 'pending')) NOT IN ('accepted', 'rejected', 'closed') ORDER BY r.created_at DESC LIMIT 6"
 )->fetchAll(PDO::FETCH_ASSOC);
+$adminDashboardStats = ['workorders' => 0, 'open' => 0, 'urgent' => 0, 'requests' => count($pendingServiceRequests)];
+try {
+    $adminDashboardStats['workorders'] = (int)$conn->query('SELECT COUNT(*) FROM workorders')->fetchColumn();
+    $adminDashboardStats['open'] = (int)$conn->query("SELECT COUNT(*) FROM workorders WHERE LOWER(COALESCE(status, 'open')) NOT IN ('completed', 'closed')")->fetchColumn();
+    $adminDashboardStats['urgent'] = (int)$conn->query("SELECT COUNT(*) FROM workorders WHERE LOWER(COALESCE(priority, 'normal')) IN ('high', 'urgent', 'emergency')")->fetchColumn();
+} catch (Throwable $statsError) {
+    // Keep dashboard available if a legacy schema lacks a counter column.
+}
+$openVisitsForAdminReview = $conn->query("SELECT l.workorder_id, l.entry_date, l.time_entered, w.client_name, w.location, s.firstname, s.lastname
+    FROM workorder_property_entry_logs l
+    INNER JOIN workorders w ON w.id = l.workorder_id
+    LEFT JOIN staff s ON s.id = COALESCE(l.technician_id, w.work_performed_by)
+    WHERE COALESCE(l.departure_date, l.entry_date) < CURDATE() AND l.time_entered IS NOT NULL AND l.time_departed IS NULL
+    ORDER BY l.entry_date ASC, l.time_entered ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 require_once '../includes/header.php';
 ?>
 
 <style>
-    .dashboard-container {
-        background-color: rgb(234, 234, 234);
-        border-radius: 10px;
-        padding: 30px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-        margin-top: 20px;
-        width: 85%;
-        margin: 0 auto;
-    }
-    .dashboard-container h3 {
-        background-color: #007BFF;
-        color: white;
-        padding: 12px 15px;
-        margin: -30px -30px 20px -30px;
-        border-radius: 10px 10px 0 0;
-        font-size: 16px;
-    }
-    .quick-actions-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-    }
-    .action-card {
-        background-color: white;
-        padding: 20px;
-        border-radius: 8px;
-        text-align: center;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        transition: all 0.3s ease;
-        text-decoration: none;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        border-left: 4px solid #007BFF;
-    }
-    .action-card:hover {
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        transform: translateY(-2px);
-    }
-    .action-card a {
-        color: #333;
-        text-decoration: none;
-        font-weight: bold;
-        font-size: 14px;
-    }
-    .action-card a:hover {
-        color: #007BFF;
-    }
-    .action-card.primary {
-        border-left-color: #28a745;
-    }
-    .action-card.danger {
-        border-left-color: #dc3545;
-    }
-    .action-card.info {
-        border-left-color: #17a2b8;
-    }
+    .admin-dashboard-shell { width:min(1164px, calc(100% - 36px)); margin:30px auto 48px; color:#0f172a; }
+    .admin-dashboard-shell .page-header { width:100%; display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 8px; padding:0; text-align:left; }
+    .admin-dashboard-shell .greeting { width:100%; text-align:left; margin:6px 0 22px; color:#64748b; font-size:14px; }
+    .dashboard-container { width:100%; margin:0 0 20px; padding:0; border:1px solid #e5e7eb; border-radius:12px; background:#fff; box-shadow:0 3px 14px rgba(15,23,42,.05); overflow:hidden; box-sizing:border-box; }
+    .dashboard-container h3 { margin:0; padding:13px 16px; border-radius:0; background:linear-gradient(135deg,#123d71,#1d4ed8); color:#fff; font-size:15px; }
+    .quick-actions-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; padding:16px; }
+    .admin-stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:0 0 20px; }
+    .admin-stat-card { padding:15px 17px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; box-shadow:0 3px 14px rgba(15,23,42,.05); }
+    .admin-stat-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.045em; }
+    .admin-stat-card strong { display:block; margin-top:5px; color:#123d71; font-size:28px; }
+    .action-card { min-height:70px; display:flex; align-items:center; padding:14px 16px; border:1px solid #dbeafe; border-left:4px solid #2563eb; border-radius:10px; background:#f8fbff; box-shadow:0 2px 8px rgba(15,23,42,.04); transition:transform .16s ease,box-shadow .16s ease; }
+    .action-card:hover { transform:translateY(-2px); box-shadow:0 8px 18px rgba(15,23,42,.1); }
+    .action-card a { color:#123d71; text-decoration:none; font-size:14px; font-weight:700; }
+    .action-card a:hover { color:#2563eb; }
+    .action-card.primary { border-left-color:#0f766e; }
+    .action-card.danger { border-left-color:#dc2626; }
+    .action-card.info { border-left-color:#0284c7; }
+    .dashboard-container > div:not(.quick-actions-grid), .dashboard-container > p, .dashboard-container > table { margin-left:16px; margin-right:16px; }
+    .dashboard-container > div:not(.quick-actions-grid) { margin-top:14px; margin-bottom:14px; }
+    .dashboard-container > p { padding:0 0 16px; color:#64748b; }
+    .dashboard-container table { width:calc(100% - 32px) !important; margin-bottom:16px; border-collapse:collapse; }
+    .dashboard-container table th { background:#f8fafc; color:#475569; text-transform:uppercase; letter-spacing:.04em; font-size:11px; }
+    .dashboard-container table td,.dashboard-container table th { padding:9px 10px !important; border-bottom:1px solid #eef2f7; }
+    @media(max-width:640px) { .admin-dashboard-shell { width:calc(100% - 36px); margin-top:22px; } .quick-actions-grid { padding:12px; gap:9px; } }
 </style>
 
+<main class="admin-dashboard-shell">
 <div class="page-header">
     <h2 style="margin: 0;">Admin Dashboard</h2>
     <a href="/sps/pages/admin_dashboard.php" style="color: #007BFF; text-decoration: none;">← Back</a>
 </div>
 
 <p class="greeting">Welcome back, <?php echo htmlspecialchars($adminName, ENT_QUOTES, 'UTF-8'); ?>.</p>
+
+<div class="admin-stat-grid">
+    <div class="admin-stat-card"><span>Total Work Orders</span><strong><?php echo $adminDashboardStats['workorders']; ?></strong></div>
+    <div class="admin-stat-card"><span>Open Queue</span><strong><?php echo $adminDashboardStats['open']; ?></strong></div>
+    <div class="admin-stat-card"><span>High / Urgent Priority</span><strong><?php echo $adminDashboardStats['urgent']; ?></strong></div>
+    <div class="admin-stat-card"><span>Requests to Review</span><strong><?php echo $adminDashboardStats['requests']; ?></strong></div>
+</div>
+
+<?php if (!empty($openVisitsForAdminReview)): ?>
+    <div style="width:100%; margin:0 auto 20px; padding:14px 16px; border:1px solid #fca5a5; border-left:5px solid #dc2626; border-radius:12px; background:#fff7f7; box-sizing:border-box;">
+        <h3 style="margin:0 0 6px; color:#991b1b;">Missed check-outs — admin follow-up (<?php echo count($openVisitsForAdminReview); ?>)</h3>
+        <p style="margin:0 0 10px; color:#7f1d1d;">Contact the technician, record who called and when, then enter the reported departure time.</p>
+        <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; background:#fff;">
+                <thead><tr style="text-align:left; background:#fee2e2;">
+                    <th style="padding:7px;">Work order</th><th style="padding:7px;">Customer / Location</th><th style="padding:7px;">Technician</th><th style="padding:7px;">Checked in</th><th style="padding:7px;">Action</th>
+                </tr></thead>
+                <tbody>
+                    <?php foreach ($openVisitsForAdminReview as $openVisit): ?>
+                        <tr style="border-top:1px solid #fecaca;">
+                            <td style="padding:7px;">WO<?php echo str_pad((string)(int)$openVisit['workorder_id'], 4, '0', STR_PAD_LEFT); ?></td>
+                            <td style="padding:7px;"><?php echo htmlspecialchars(trim((string)($openVisit['client_name'] ?? '') . ' — ' . (string)($openVisit['location'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:7px;"><?php echo htmlspecialchars(trim((string)($openVisit['firstname'] ?? '') . ' ' . (string)($openVisit['lastname'] ?? '')) ?: 'Unassigned', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:7px;"><?php echo htmlspecialchars(date('M j, Y', strtotime($openVisit['entry_date'])) . ' at ' . date('g:i A', strtotime($openVisit['time_entered'])), ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td style="padding:7px;"><a href="/sps/pages/edit_workorder.php?id=<?php echo (int)$openVisit['workorder_id']; ?>" style="color:#b91c1c; font-weight:700;">Record departure</a></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+<?php endif; ?>
 
 <div class="dashboard-container">
     <h3>Quick Actions</h3>
@@ -210,5 +226,6 @@ require_once '../includes/header.php';
         </table>
     <?php endif; ?>
 </div>
+</main>
 
 <?php require_once '../includes/footer.php'; ?>

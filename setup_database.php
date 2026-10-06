@@ -32,9 +32,29 @@ $sqlCustomers = "CREATE TABLE IF NOT EXISTS `customers` (
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4";
 
+$sqlCustomerAssets = "CREATE TABLE IF NOT EXISTS `customer_assets` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `customer_id` INT NOT NULL,
+    `asset_name` VARCHAR(120) DEFAULT NULL,
+    `asset_type` VARCHAR(60) DEFAULT NULL,
+    `make` VARCHAR(100) DEFAULT NULL,
+    `model` VARCHAR(100) DEFAULT NULL,
+    `model_year` SMALLINT DEFAULT NULL,
+    `serial_number` VARCHAR(100) DEFAULT NULL,
+    `hours` DECIMAL(10,2) DEFAULT NULL,
+    `boat_length` DECIMAL(6,2) DEFAULT NULL,
+    `engine_count` TINYINT UNSIGNED DEFAULT NULL,
+    `engine_details` TEXT DEFAULT NULL,
+    `notes` TEXT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX customer_assets_owner (`customer_id`)
+) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4";
+
 $sqlWorkorders = "CREATE TABLE IF NOT EXISTS `workorders` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `customer_id` INT,
+    `asset_id` INT DEFAULT NULL,
     `client_name` VARCHAR(100) NOT NULL,
     `client_phone` VARCHAR(20),
     `location` VARCHAR(255) NOT NULL,
@@ -57,11 +77,13 @@ $sqlWorkorders = "CREATE TABLE IF NOT EXISTS `workorders` (
     `order_received_by` INT,
     `work_performed_by` INT,
     `permission_anytime` TINYINT DEFAULT 0,
+    `permission_anytime_with_time` TINYINT(1) NOT NULL DEFAULT 0,
     `permission_date` DATE,
     `permission_time` TIME,
     `entry_date` DATE,
     `time_entered` TIME,
     `time_departed` TIME,
+    `permission_time_relation` VARCHAR(10) DEFAULT NULL,
     `work_description` LONGTEXT,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -78,6 +100,17 @@ $sqlWorkPerformedEntries = "CREATE TABLE IF NOT EXISTS `work_performed_entries` 
     INDEX(`workorder_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4";
 
+$sqlPropertyEntryLogs = "CREATE TABLE IF NOT EXISTS `workorder_property_entry_logs` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `workorder_id` INT NOT NULL,
+    `entry_date` DATE NOT NULL,
+    `time_entered` TIME DEFAULT NULL,
+    `time_departed` TIME DEFAULT NULL,
+    `logged_by` INT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX(`workorder_id`, `entry_date`)
+) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4";
+
 $sqlSupport = "CREATE TABLE IF NOT EXISTS `customer_support_messages` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `customer_id` INT NOT NULL,
@@ -91,6 +124,7 @@ $sqlSupport = "CREATE TABLE IF NOT EXISTS `customer_support_messages` (
 $sqlCustomerServiceRequests = "CREATE TABLE IF NOT EXISTS `customer_service_requests` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `customer_id` INT NOT NULL,
+    `asset_id` INT DEFAULT NULL,
     `request_number` VARCHAR(30) DEFAULT NULL,
     `service_type` VARCHAR(100) NOT NULL,
     `location` VARCHAR(255) NOT NULL,
@@ -129,7 +163,15 @@ try {
 }
 
 try {
+    $conn->exec($sqlCustomerAssets);
+    echo "✓ Customer assets table created/verified<br>";
+} catch (PDOException $e) {
+    echo "✗ Customer assets error: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "<br>";
+}
+
+try {
     $conn->exec($sqlWorkorders);
+    $conn->exec("ALTER TABLE workorders ADD COLUMN IF NOT EXISTS asset_id INT DEFAULT NULL");
     echo "✓ Workorders table created/verified<br>";
 } catch (PDOException $e) {
     echo "✗ Workorders error: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "<br>";
@@ -143,6 +185,13 @@ try {
 }
 
 try {
+    $conn->exec($sqlPropertyEntryLogs);
+    echo "✓ Property entry logs table created/verified<br>";
+} catch (PDOException $e) {
+    echo "✗ Property entry logs error: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "<br>";
+}
+
+try {
     $conn->exec($sqlSupport);
     echo "✓ Customer support table created/verified<br>";
 } catch (PDOException $e) {
@@ -151,6 +200,7 @@ try {
 
 try {
     $conn->exec($sqlCustomerServiceRequests);
+    $conn->exec("ALTER TABLE customer_service_requests ADD COLUMN IF NOT EXISTS asset_id INT DEFAULT NULL");
     echo "✓ Customer service requests table created/verified<br>";
 } catch (PDOException $e) {
     echo "✗ Customer service requests error: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "<br>";
@@ -161,7 +211,7 @@ try {
         id INT AUTO_INCREMENT PRIMARY KEY,
         staff_id INT NOT NULL UNIQUE,
         email_enabled TINYINT(1) NOT NULL DEFAULT 1,
-        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 0,
         sms_enabled TINYINT(1) NOT NULL DEFAULT 0,
         preferred_channel VARCHAR(20) NOT NULL DEFAULT 'email',
         phone_number VARCHAR(30) DEFAULT NULL,
@@ -185,11 +235,22 @@ try {
         id INT AUTO_INCREMENT PRIMARY KEY,
         customer_id INT NOT NULL UNIQUE,
         email_enabled TINYINT(1) NOT NULL DEFAULT 1,
-        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 0,
         sms_enabled TINYINT(1) NOT NULL DEFAULT 0,
         preferred_channel VARCHAR(20) NOT NULL DEFAULT 'email',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX(customer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+    $conn->exec("CREATE TABLE IF NOT EXISTS customer_notification_log (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        category VARCHAR(80) NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        channel VARCHAR(20) NOT NULL,
+        status VARCHAR(30) NOT NULL,
+        note VARCHAR(255) DEFAULT NULL,
+        attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX(customer_id, attempted_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     echo "✓ Notification preference tables created/verified<br>";
 } catch (PDOException $e) {

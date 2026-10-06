@@ -8,6 +8,10 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
 
  $title = 'Dashboard';
  require_once '../includes/dbh.inc.php';
+ require_once '../includes/property_entry_logs.inc.php';
+ require_once '../includes/workorder_technicians.inc.php';
+ ensure_property_entry_log_schema($conn);
+ ensure_workorder_technicians_schema($conn);
 
 // ensure session role is populated (use DB if session missing)
  $userId = (int)($_SESSION['user_id'] ?? 0);
@@ -76,12 +80,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'quick
         if ($target) {
             $canQuickUpdate = false;
             if ($currentRole === 'technician') {
-                $canQuickUpdate = (int)($target['work_performed_by'] ?? 0) === $userId;
+                $canQuickUpdate = is_workorder_technician_assigned($conn, $woId, $userId, $target['work_performed_by'] ?? 0);
             } elseif (in_array($currentRole, ['office', 'staff', 'admin'], true)) {
                 $canQuickUpdate = true;
             }
             if ($canQuickUpdate) {
-                $allowed = ['status','entry_date','time_entered','time_departed','vessel_hours','labor_time','parts_cost'];
+                $allowed = ['status','vessel_hours','parts_cost'];
                 if (!$hasStatus) {
                     // remove status from allowed updates when column is missing
                     $allowed = array_values(array_filter($allowed, function($f){ return $f !== 'status'; }));
@@ -141,11 +145,11 @@ JOIN (
     SELECT we1.workorder_id, we1.new_value
     FROM workorder_edits we1
     JOIN (
-        SELECT workorder_id, MAX(edited_at) AS maxt
+        SELECT workorder_id, MAX(id) AS max_id
         FROM workorder_edits
         WHERE field_name = 'priority'
         GROUP BY workorder_id
-    ) we2 ON we1.workorder_id = we2.workorder_id AND we1.edited_at = we2.maxt
+    ) we2 ON we1.workorder_id = we2.workorder_id AND we1.id = we2.max_id
     WHERE we1.field_name = 'priority'
 ) latest ON w.id = latest.workorder_id
 SET w.priority = latest.new_value
@@ -163,7 +167,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
     <p>Welcome, <?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Technician', ENT_QUOTES, 'UTF-8'); ?>.</p>
 
     <style>
-        .dashboard-container { background-color: rgb(234, 234, 234); border-radius: 10px; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.06); margin-top:20px; width:85%; margin:0 auto 18px; }
+        .dashboard-container { background-color: rgb(234, 234, 234); border-radius: 10px; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.06); margin:0 auto 18px; width:85%; box-sizing:border-box; }
         .dashboard-container h3 { background:#007BFF; color:#fff; padding:12px 15px; margin:-20px -20px 16px -20px; border-radius:8px 8px 0 0; font-size:16px; }
         .quick-actions-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
         .action-card { background:#fff; padding:16px; border-radius:8px; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,0.06); border-left:4px solid #007BFF; text-decoration:none; color:#333; display:flex; align-items:center; justify-content:center; }
@@ -203,14 +207,14 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
     if ($q !== '') {
         $like = "%$q%";
         if ($scope === 'assigned') {
-            $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? AND (client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ?) ORDER BY updated_at DESC LIMIT 200');
+            $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at, work_performed_by FROM workorders w WHERE (work_performed_by = ? OR EXISTS (SELECT 1 FROM workorder_technicians wt WHERE wt.workorder_id = w.id AND wt.technician_id = ?)) AND (client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ?) ORDER BY updated_at DESC LIMIT 200');
             try {
-                $searchStmt->execute([$userId, $like, $like, $like]);
+                $searchStmt->execute([$userId, $userId, $like, $like, $like]);
                 $searchResults = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
             } catch (PDOException $e) {
                 if ($e->getCode() === '42S22') {
-                    $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders WHERE work_performed_by = ? AND (client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ?) ORDER BY updated_at DESC LIMIT 200');
-                    $searchStmt->execute([$userId, $like, $like, $like]);
+                    $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at, work_performed_by FROM workorders w WHERE (work_performed_by = ? OR EXISTS (SELECT 1 FROM workorder_technicians wt WHERE wt.workorder_id = w.id AND wt.technician_id = ?)) AND (client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ?) ORDER BY updated_at DESC LIMIT 200');
+                    $searchStmt->execute([$userId, $userId, $like, $like, $like]);
                     $rows = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
                     foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
                     $searchResults = $rows;
@@ -219,13 +223,13 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                 }
             }
         } else {
-            $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ? ORDER BY updated_at DESC LIMIT 200');
+            $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at, work_performed_by FROM workorders WHERE client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ? ORDER BY updated_at DESC LIMIT 200');
             try {
                 $searchStmt->execute([$like, $like, $like]);
                 $searchResults = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
             } catch (PDOException $e) {
                 if ($e->getCode() === '42S22') {
-                    $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders WHERE client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ? ORDER BY updated_at DESC LIMIT 200');
+                    $searchStmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at, work_performed_by FROM workorders WHERE client_name LIKE ? OR location LIKE ? OR CAST(id AS CHAR) LIKE ? ORDER BY updated_at DESC LIMIT 200');
                     $searchStmt->execute([$like, $like, $like]);
                     $rows = $searchStmt->fetchAll(PDO::FETCH_ASSOC);
                     foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
@@ -239,14 +243,14 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
 
     // assigned workorders list
     if ($scope === 'assigned') {
-        $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
+        $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at, work_performed_by FROM workorders w WHERE work_performed_by = ? OR EXISTS (SELECT 1 FROM workorder_technicians wt WHERE wt.workorder_id = w.id AND wt.technician_id = ?) ORDER BY updated_at DESC');
         try {
-            $stmt->execute([$userId]);
+            $stmt->execute([$userId, $userId]);
             $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
             if ($e->getCode() === '42S22') {
-                $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders WHERE work_performed_by = ? ORDER BY updated_at DESC');
-                $stmt->execute([$userId]);
+                $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at, work_performed_by FROM workorders w WHERE work_performed_by = ? OR EXISTS (SELECT 1 FROM workorder_technicians wt WHERE wt.workorder_id = w.id AND wt.technician_id = ?) ORDER BY updated_at DESC');
+                $stmt->execute([$userId, $userId]);
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
                 $workorders = $rows;
@@ -255,13 +259,13 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             }
         }
     } else {
-        $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at FROM workorders ORDER BY updated_at DESC');
+        $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, status, priority, updated_at, work_performed_by FROM workorders ORDER BY updated_at DESC');
         try {
             $stmt->execute();
             $workorders = $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
             if ($e->getCode() === '42S22') {
-                $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at FROM workorders ORDER BY updated_at DESC');
+                $stmt = $conn->prepare('SELECT id, client_name, location, order_date, created_at, expected_end_date, updated_at, work_performed_by FROM workorders ORDER BY updated_at DESC');
                 $stmt->execute();
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 foreach ($rows as &$r) { $r['status'] = 'Open'; $r['priority'] = 'Normal'; }
@@ -272,12 +276,26 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
         }
     }
 
+    $activePropertyVisitsByWorkorder = [];
+    if ($currentRole === 'technician') {
+        $activeVisitStmt = $conn->prepare('SELECT workorder_id, entry_date, time_entered FROM workorder_property_entry_logs WHERE COALESCE(technician_id, logged_by) = ? AND time_entered IS NOT NULL AND time_departed IS NULL ORDER BY id DESC');
+        $activeVisitStmt->execute([$userId]);
+    } else {
+        $activeVisitStmt = $conn->query('SELECT workorder_id, entry_date, time_entered FROM workorder_property_entry_logs WHERE time_entered IS NOT NULL AND time_departed IS NULL ORDER BY id DESC');
+    }
+    foreach ($activeVisitStmt->fetchAll(PDO::FETCH_ASSOC) as $activeVisit) {
+        $activeWorkorderId = (int)$activeVisit['workorder_id'];
+        if (!isset($activePropertyVisitsByWorkorder[$activeWorkorderId])) {
+            $activePropertyVisitsByWorkorder[$activeWorkorderId] = $activeVisit;
+        }
+    }
+
     // prepare history statements (assignment and work-performed)
     $assignStmt = $conn->prepare('SELECT woe.*, s.full_name AS editor_name, s2.full_name AS assignee_name FROM workorder_edits woe LEFT JOIN staff s ON s.id = woe.edited_by LEFT JOIN staff s2 ON s2.id = woe.new_value WHERE woe.workorder_id = ? AND woe.field_name = ? ORDER BY woe.edited_at DESC');
     $wpStmt = $conn->prepare('SELECT woe.*, s.full_name AS editor_name FROM workorder_edits woe LEFT JOIN staff s ON s.id = woe.edited_by WHERE woe.workorder_id = ? AND woe.field_name IN ("work_description","time_entered","time_departed","vessel_hours","labor_time","parts_cost") ORDER BY woe.edited_at DESC');
     ?>
 
-    <div style="width:100%;max-width:1100px;margin:12px 0 0;display:flex;justify-content:space-between;align-items:center;gap:12px;padding-left:0;padding-right:10px;box-sizing:border-box; margin-left:10%;margin-right:auto;">
+    <div class="dashboard-filter-toolbar" style="width:96%;max-width:1400px;margin:12px auto 0;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:0 10px;box-sizing:border-box;">
         <form class="filter-form" method="get" style="margin-left:0;">
             <label for="view-filter" style="font-size:12px;font-weight:700;">View</label>
             <select id="view-filter" name="scope" class="filter-select" onchange="this.form.submit();">
@@ -327,44 +345,19 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             vertical-align:middle;
             box-sizing:border-box;
         }
-        .tech-wo-table { width:100%; max-width:80vw; min-width:980px; margin:12px auto 80px; border-collapse:collapse; font-family: Arial, sans-serif; table-layout: fixed; }
-        .tech-wo-table th, .tech-wo-table td { padding:12px 10px; border:1px solid #e6e6e6; text-align:center; vertical-align:middle; }
-        .tech-wo-table thead th { text-align: center; }
-        .tech-wo-table th:nth-child(1), .tech-wo-table td:nth-child(1) { width:68px; min-width:68px; max-width:68px; }
-        .tech-wo-table th:nth-child(2), .tech-wo-table td:nth-child(2),
-        .tech-wo-table th:nth-child(3), .tech-wo-table td:nth-child(3),
-        .tech-wo-table th:nth-child(4), .tech-wo-table td:nth-child(4) {
-            width: 15%;
-            min-width: 150px;
-        }
-        .tech-wo-table th:nth-child(5), .tech-wo-table td:nth-child(5) {
-            width: 9%;
-            min-width: 90px;
-        }
-        .tech-wo-table th:nth-child(6), .tech-wo-table td:nth-child(6) {
-            width: 13%;
-            min-width: 120px;
-        }
-        .tech-wo-table th:nth-child(7), .tech-wo-table td:nth-child(7) {
-            width: 11%;
-            min-width: 110px;
-        }
-        .tech-wo-table th:nth-child(8), .tech-wo-table td:nth-child(8) {
-            width: 6%;
-            min-width: 60px;
-        }
-        .tech-wo-table th:nth-child(9), .tech-wo-table td:nth-child(9) {
-            width: 6%;
-            min-width: 60px;
-        }
-        .tech-wo-table th:nth-child(10), .tech-wo-table td:nth-child(10) {
-            width: 12%;
-            min-width: 120px;
-        }
-        .tech-wo-table th:nth-child(11), .tech-wo-table td:nth-child(11) {
-            width: 220px;
-            max-width: 220px;
-        }
+        .tech-wo-table-wrap { width:85%; max-width:none; margin:30px auto 24px; overflow:visible; }
+        .tech-wo-table { width:100%; min-width:0; margin:0 auto 40px; border-collapse:collapse; font-family:Arial, sans-serif; table-layout:fixed; }
+        .tech-wo-table th, .tech-wo-table td { padding:4px 8px; border:1px solid #e6e6e6; text-align:center; vertical-align:middle; }
+        .tech-wo-table thead th { text-align:center; background:#e8eef5; color:#1f2937; }
+        .tech-wo-table th:nth-child(1), .tech-wo-table td:nth-child(1) { width:70px; }
+        .tech-wo-table th:nth-child(2), .tech-wo-table td:nth-child(2) { width:17%; }
+        .tech-wo-table th:nth-child(3), .tech-wo-table td:nth-child(3) { width:12%; }
+        .tech-wo-table th:nth-child(4), .tech-wo-table td:nth-child(4) { width:100px; white-space:nowrap; }
+        .tech-wo-table th:nth-child(5), .tech-wo-table td:nth-child(5) { width:125px; white-space:nowrap; }
+        .tech-wo-table th:nth-child(6), .tech-wo-table td:nth-child(6) { width:7%; }
+        .tech-wo-table th:nth-child(7), .tech-wo-table td:nth-child(7) { width:8%; }
+        .tech-wo-table th:nth-child(8), .tech-wo-table td:nth-child(8) { width:10%; }
+        .tech-wo-table th:nth-child(9), .tech-wo-table td:nth-child(9) { width:180px; }
         .tech-wo-table td:last-child {
             white-space: nowrap;
             overflow: visible;
@@ -375,11 +368,12 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
         .tech-wo-table td:last-child a,
         .tech-wo-table td:last-child .btn {
             display: inline-block;
-            margin: 0 4px 0 0;
+            margin: 0 2px 0 0;
+            padding:4px 5px;
             white-space: nowrap;
             vertical-align: middle;
-            line-height: 1.15;
-            font-size: 12px;
+            line-height:1.1;
+            font-size:11px;
         }
         .quick-update { display:none; margin-top:8px; background:#f9f9fb; padding:10px; border-radius:6px; }
         .btn { padding:6px 10px; border-radius:4px; background:#007BFF; color:#fff; text-decoration:none; }
@@ -394,17 +388,14 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
         <p style="max-width:900px;margin:12px auto;">You have no assigned work orders at this time.</p>
     <?php else: ?>
         <?php if (!empty($searchResults)): ?>
-            <h3 style="max-width:1100px;margin:12px auto 0;">Search results for "<?php echo htmlspecialchars($q, ENT_QUOTES, 'UTF-8'); ?>"</h3>
-            <table class="tech-wo-table" style="max-width:1100px;margin:12px auto 20px;">
+            <h3 style="width:96%;max-width:1400px;margin:12px auto 0;">Search results for "<?php echo htmlspecialchars($q, ENT_QUOTES, 'UTF-8'); ?>"</h3>
+            <div class="tech-wo-table-wrap"><table class="tech-wo-table">
                 <thead>
                     <tr>
                         <th>Work Order #</th>
                         <th>Client</th>
-                        <th>Location</th>
-                        <th>Created By</th>
                         <th>Assigned To</th>
                         <th>Order Date</th>
-                        <th>Date Created</th>
                         <th>Expected End Date</th>
                         <th>Priority</th>
                         <th>Status</th>
@@ -414,40 +405,11 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                 </thead>
                 <tbody>
                 <?php foreach ($searchResults as $sres): ?>
-                    <?php $rowClass = (isset($sres['priority']) && strtolower(trim((string)$sres['priority'])) === 'high') ? 'priority-row' : ''; ?>
+                    <?php $rowClass = (isset($sres['priority']) && in_array(strtolower(trim((string)$sres['priority'])), ['high', 'urgent', 'emergency'], true)) ? 'priority-row' : ''; ?>
                     <tr class="<?php echo $rowClass; ?>">
                         <td><?php echo htmlspecialchars(!empty($sres['order_number']) ? $sres['order_number'] : 'WO' . str_pad((string)(int)$sres['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($sres['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <?php
-                            $creatorName = '';
-                            if (!empty($sres['order_received_by'])) {
-                                $creatorStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
-                                $creatorStmt->execute([(int)$sres['order_received_by']]);
-                                $creatorRow = $creatorStmt->fetch(PDO::FETCH_ASSOC);
-                                if ($creatorRow) {
-                                    $creatorName = trim(($creatorRow['firstname'] ?? '') . ' ' . ($creatorRow['lastname'] ?? ''));
-                                }
-                            }
-                            if ($creatorName === '') {
-                                $creatorHistoryStmt = $conn->prepare('SELECT e.new_value, e.edited_by, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = ? ORDER BY e.edited_at DESC LIMIT 1');
-                                $creatorHistoryStmt->execute([(int)$sres['id'], 'order_received_by']);
-                                $creatorHistoryRow = $creatorHistoryStmt->fetch(PDO::FETCH_ASSOC);
-                                if ($creatorHistoryRow) {
-                                    $creatorHistoryValue = trim((string)($creatorHistoryRow['new_value'] ?? ''));
-                                    if ($creatorHistoryValue !== '' && is_numeric($creatorHistoryValue)) {
-                                        $creatorStaffStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
-                                        $creatorStaffStmt->execute([(int)$creatorHistoryValue]);
-                                        $creatorStaffRow = $creatorStaffStmt->fetch(PDO::FETCH_ASSOC);
-                                        if ($creatorStaffRow) {
-                                            $creatorName = trim(($creatorStaffRow['firstname'] ?? '') . ' ' . ($creatorStaffRow['lastname'] ?? ''));
-                                        }
-                                    }
-                                    if ($creatorName === '' && (!empty($creatorHistoryRow['firstname']) || !empty($creatorHistoryRow['lastname']))) {
-                                        $creatorName = trim(($creatorHistoryRow['firstname'] ?? '') . ' ' . ($creatorHistoryRow['lastname'] ?? ''));
-                                    }
-                                }
-                            }
                             $assignedName = '';
                             if (!empty($sres['work_performed_by'])) {
                                 $assignedStmt = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
@@ -478,12 +440,10 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                                 } catch (Exception $ex) { }
                             }
                         ?>
-                        <td><?php echo htmlspecialchars($creatorName ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($assignedName ?: 'Not Assigned', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars($sres['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="priority-cell <?php echo (isset($sres['priority']) && strtolower(trim((string)$sres['priority'])) === 'high') ? 'priority-high' : ''; ?>"><?php echo htmlspecialchars($sres['priority'] ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="priority-cell <?php echo (isset($sres['priority']) && in_array(strtolower(trim((string)$sres['priority'])), ['high', 'urgent', 'emergency'], true)) ? 'priority-high' : ''; ?>"><?php echo htmlspecialchars($sres['priority'] ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['status'] ?? 'Open', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($sres['updated_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td>
@@ -493,19 +453,16 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
-            </table>
+            </table></div>
         <?php endif; ?>
 
-        <table class="tech-wo-table" id="assigned-list">
+        <div class="tech-wo-table-wrap"><table class="tech-wo-table" id="assigned-list">
             <thead>
                 <tr>
                     <th>Work Order #</th>
                     <th>Client</th>
-                    <th>Location</th>
-                    <th>Created By</th>
                     <th>Assigned To</th>
                     <th>Order Date</th>
-                    <th>Date Created</th>
                     <th>Expected End Date</th>
                     <th>Priority</th>
                     <th>Status</th>
@@ -524,41 +481,15 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                         $prow = $pstmt->fetch(PDO::FETCH_ASSOC);
                         if ($prow && isset($prow['priority'])) $rawPriority = (string)$prow['priority'];
                     } catch (Exception $e) { }
-                    $rowClass = (strtolower(trim((string)$rawPriority)) === 'high') ? 'priority-row' : '';
+                    $rowClass = in_array(strtolower(trim((string)$rawPriority)), ['high', 'urgent', 'emergency'], true) ? 'priority-row' : '';
+                    $isAssignedToCurrentTechnician = $currentRole === 'technician' && is_workorder_technician_assigned($conn, (int)$wo['id'], $userId, $wo['work_performed_by'] ?? 0);
+                    $isCompletedWorkOrder = in_array(strtolower(trim((string)($wo['status'] ?? ''))), ['completed', 'closed'], true);
+                    $activePropertyVisit = $activePropertyVisitsByWorkorder[(int)$wo['id']] ?? null;
                 ?>
                 <tr class="<?php echo $rowClass; ?>">
                     <td><?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['client_name'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                         <?php
-                            $createdBy = '';
-                            if (!empty($wo['order_received_by'])) {
-                                $createStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
-                                $createStmt->execute([(int)$wo['order_received_by']]);
-                                $createRow = $createStmt->fetch(PDO::FETCH_ASSOC);
-                                if ($createRow) {
-                                    $createdBy = trim(($createRow['firstname'] ?? '') . ' ' . ($createRow['lastname'] ?? ''));
-                                }
-                            }
-                            if ($createdBy === '') {
-                                $createHistoryStmt = $conn->prepare('SELECT e.new_value, e.edited_by, s.firstname, s.lastname FROM workorder_edits e LEFT JOIN staff s ON s.id = e.edited_by WHERE e.workorder_id = ? AND e.field_name = ? ORDER BY e.edited_at DESC LIMIT 1');
-                                $createHistoryStmt->execute([(int)$wo['id'], 'order_received_by']);
-                                $createHistoryRow = $createHistoryStmt->fetch(PDO::FETCH_ASSOC);
-                                if ($createHistoryRow) {
-                                    $createHistoryValue = trim((string)($createHistoryRow['new_value'] ?? ''));
-                                    if ($createHistoryValue !== '' && is_numeric($createHistoryValue)) {
-                                        $creatorStaffStmt = $conn->prepare('SELECT firstname, lastname FROM staff WHERE id = ? LIMIT 1');
-                                        $creatorStaffStmt->execute([(int)$createHistoryValue]);
-                                        $creatorStaffRow = $creatorStaffStmt->fetch(PDO::FETCH_ASSOC);
-                                        if ($creatorStaffRow) {
-                                            $createdBy = trim(($creatorStaffRow['firstname'] ?? '') . ' ' . ($creatorStaffRow['lastname'] ?? ''));
-                                        }
-                                    }
-                                    if ($createdBy === '' && (!empty($createHistoryRow['firstname']) || !empty($createHistoryRow['lastname']))) {
-                                        $createdBy = trim(($createHistoryRow['firstname'] ?? '') . ' ' . ($createHistoryRow['lastname'] ?? ''));
-                                    }
-                                }
-                            }
                             $assignedTo = '';
                             if (!empty($wo['work_performed_by'])) {
                                 $assignStmt = $conn->prepare('SELECT firstname, lastname, role FROM staff WHERE id = ? LIMIT 1');
@@ -589,13 +520,17 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                                 } catch (Exception $ex) { }
                             }
                         ?>
-                        <td><?php echo htmlspecialchars($createdBy ?: 'Unknown', ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($assignedTo ?: 'Not Assigned', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars($wo['created_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($wo['expected_end_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td class="priority-cell <?php echo (strtolower(trim((string)$rawPriority)) === 'high') ? 'priority-high' : ''; ?>"><?php echo htmlspecialchars($rawPriority ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars($wo['status'] ?? 'Open', ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="priority-cell <?php echo in_array(strtolower(trim((string)$rawPriority)), ['high', 'urgent', 'emergency'], true) ? 'priority-high' : ''; ?>"><?php echo htmlspecialchars($rawPriority ?? 'Normal', ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo htmlspecialchars($wo['status'] ?? 'Open', ENT_QUOTES, 'UTF-8'); ?>
+                        <?php if ($isAssignedToCurrentTechnician && !$isCompletedWorkOrder): ?>
+                            <div style="margin-top:4px; color:<?php echo $activePropertyVisit ? '#b91c1c' : '#1d4ed8'; ?>; font-size:11px; font-weight:700;">
+                                <?php echo $activePropertyVisit ? 'STILL CHECKED IN — CHECK OUT BEFORE LEAVING' : 'REMINDER: CHECK IN WHEN YOU ARRIVE'; ?>
+                            </div>
+                        <?php endif; ?>
+                    </td>
                     <td><?php echo htmlspecialchars($wo['updated_at'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                     <td>
                         <a class="btn" href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>">View</a>
@@ -603,7 +538,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                         <a class="btn" href="#" onclick="toggleQuick(<?php echo (int)$wo['id']; ?>);return false;">Quick Update</a>
                     </td>
                 </tr>
-                <tr id="quick-row-<?php echo (int)$wo['id']; ?>" style="display:none;"><td colspan="11">
+                <tr id="quick-row-<?php echo (int)$wo['id']; ?>" style="display:none;"><td colspan="10">
                     <div class="quick-update" id="quick-<?php echo (int)$wo['id']; ?>">
                         <form method="post" onsubmit="return confirm('Apply quick update?');">
                             <input type="hidden" name="action" value="quick_update">
@@ -615,16 +550,13 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                                 <?php endforeach; ?>
                             </select></label><br>
                             <?php endif; ?>
-                            <label>Entry Date: <input type="date" name="entry_date"></label>
-                            <label>Time Entered: <input type="time" name="time_entered"></label>
-                            <label>Time Departed: <input type="time" name="time_departed"></label>
                             <div style="margin-top:8px;"><button class="btn" type="submit">Save</button> <a href="#" onclick="toggleQuick(<?php echo (int)$wo['id']; ?>);return false;" class="btn btn-secondary">Cancel</a></div>
                         </form>
                     </div>
                 </td></tr>
             <?php endforeach; ?>
             </tbody>
-        </table>
+        </table></div>
     <?php endif; ?>
 
     <script>
@@ -659,6 +591,25 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             max-width: 1200px;
             margin: 20px auto 0;
         }
+        .office-section {
+            width: 100%;
+            margin: 0 0 20px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+            box-shadow: 0 1px 10px rgba(0,0,0,0.04);
+            box-sizing: border-box;
+        }
+        .office-section > h3 {
+            margin: 0;
+            padding: 12px 15px;
+            background: #007BFF;
+            color: #fff;
+            font-size: 16px;
+            line-height: 1.25;
+        }
+        .office-section-body { padding: 14px 16px; }
         .office-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -755,7 +706,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             $officeStats['open'] = $officeStats['total'];
         }
         if ($officeHasPriority) {
-            $officeStats['high'] = (int) $conn->query("SELECT COUNT(*) FROM workorders WHERE LOWER(COALESCE(priority, '')) = 'high'")->fetchColumn();
+            $officeStats['high'] = (int) $conn->query("SELECT COUNT(*) FROM workorders WHERE LOWER(COALESCE(priority, '')) IN ('high', 'urgent', 'emergency')")->fetchColumn();
         }
         $officeStats['today'] = (int) $conn->query("SELECT COUNT(*) FROM workorders WHERE DATE(order_date) = CURDATE() OR DATE(created_at) = CURDATE()")->fetchColumn();
     } catch (Exception $e) {
@@ -789,6 +740,18 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
     } catch (Exception $e) {
         $pendingCustomerRequests = [];
     }
+
+    $openVisitsForReview = [];
+    try {
+        $openVisitsForReview = $conn->query("SELECT l.workorder_id, l.entry_date, l.time_entered, w.client_name, w.location, s.firstname, s.lastname
+            FROM workorder_property_entry_logs l
+            INNER JOIN workorders w ON w.id = l.workorder_id
+            LEFT JOIN staff s ON s.id = COALESCE(l.technician_id, w.work_performed_by)
+            WHERE COALESCE(l.departure_date, l.entry_date) < CURDATE() AND l.time_entered IS NOT NULL AND l.time_departed IS NULL
+            ORDER BY l.entry_date ASC, l.time_entered ASC")->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $openVisitsForReview = [];
+    }
     ?>
 
     <div class="office-dashboard">
@@ -799,6 +762,31 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             <div class="office-card"><a href="/sps/pages/profile.php">My Profile</a></div>
             <div class="office-card warning"><a href="/sps/pages/dashboard.php?scope=all">Review Queue</a></div>
         </div>
+
+        <?php if (!empty($openVisitsForReview)): ?>
+            <div style="margin:0 0 18px; padding:14px 16px; border:1px solid #fca5a5; border-left:6px solid #dc2626; border-radius:8px; background:#fff7f7;">
+                <h3 style="margin:0 0 6px; color:#991b1b;">Missed check-outs — needs office review (<?php echo count($openVisitsForReview); ?>)</h3>
+                <p style="margin:0 0 10px; color:#7f1d1d;">These visits are still marked as checked in after the day they began. Contact the technician and ask an admin to record the reported departure time.</p>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                        <thead><tr style="text-align:left; background:#fee2e2;">
+                            <th style="padding:7px;">Work order</th><th style="padding:7px;">Customer / Location</th><th style="padding:7px;">Technician</th><th style="padding:7px;">Checked in</th><th style="padding:7px;">Review</th>
+                        </tr></thead>
+                        <tbody>
+                            <?php foreach ($openVisitsForReview as $openVisit): ?>
+                                <tr style="border-top:1px solid #fecaca;">
+                                    <td style="padding:7px;">WO<?php echo str_pad((string)(int)$openVisit['workorder_id'], 4, '0', STR_PAD_LEFT); ?></td>
+                                    <td style="padding:7px;"><?php echo htmlspecialchars(trim((string)($openVisit['client_name'] ?? '') . ' — ' . (string)($openVisit['location'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:7px;"><?php echo htmlspecialchars(trim((string)($openVisit['firstname'] ?? '') . ' ' . (string)($openVisit['lastname'] ?? '')) ?: 'Unassigned', ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:7px;"><?php echo htmlspecialchars(date('M j, Y', strtotime($openVisit['entry_date'])) . ' at ' . date('g:i A', strtotime($openVisit['time_entered'])), ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td style="padding:7px;"><a href="/sps/pages/view_workorder.php?id=<?php echo (int)$openVisit['workorder_id']; ?>" style="color:#b91c1c; font-weight:700;">Review work order</a></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <div class="office-stats">
             <div class="stat-box">
@@ -819,18 +807,21 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             </div>
         </div>
 
-        <div class="dashboard-container" style="width:100%; margin:0 0 20px;">
+        <section class="office-section">
             <h3>Office Activity</h3>
-            <p>Use this dashboard to create new jobs, review the current queue, and keep work orders moving efficiently for customers and technicians.</p>
-            <ul>
+            <div class="office-section-body">
+            <p style="margin:0 0 10px;">Use this dashboard to create new jobs, review the current queue, and keep work orders moving efficiently for customers and technicians.</p>
+            <ul style="margin:0; padding-left:22px;">
                 <li>Open and edit active work orders from the queue.</li>
                 <li>Track customer requests, order dates, and expected end dates.</li>
                 <li>Review high-priority jobs and keep technician scheduling accurate.</li>
             </ul>
-        </div>
+            </div>
+        </section>
 
-        <div class="dashboard-container" style="width:100%; margin:0 0 20px;">
+        <section class="office-section">
             <h3>Pending Customer Requests</h3>
+            <div class="office-section-body">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
                 <strong style="font-size:14px; color:#1f2937;"><?php echo count($pendingCustomerRequests); ?> waiting for review</strong>
                 <a href="/sps/pages/manage_service_requests.php" style="color:#007BFF; text-decoration:none; font-weight:700;">Review all requests</a>
@@ -839,6 +830,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
             <?php if (empty($pendingCustomerRequests)): ?>
                 <p style="margin:0; color:#4b5563;">No new customer requests are waiting.</p>
             <?php else: ?>
+                <div class="office-table-scroll office-pending-requests-scroll">
                 <table class="office-table" style="width:100%;">
                     <thead>
                         <tr>
@@ -865,10 +857,14 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                </div>
             <?php endif; ?>
-        </div>
+            </div>
+        </section>
 
+        <section class="office-section">
         <h3>Recent Work Orders</h3>
+        <div class="office-section-body office-table-scroll office-recent-orders-scroll">
         <?php if (empty($recentOfficeWOs)): ?>
             <p>No work orders have been created yet.</p>
         <?php else: ?>
@@ -891,7 +887,7 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                         <?php
                             $status = isset($row['status']) && $row['status'] !== '' ? $row['status'] : 'Open';
                             $priority = isset($row['priority']) && $row['priority'] !== '' ? $row['priority'] : 'Normal';
-                            $priorityClass = strtolower(trim((string)$priority)) === 'high' ? 'high' : 'open';
+                            $priorityClass = in_array(strtolower(trim((string)$priority)), ['high', 'urgent', 'emergency'], true) ? 'high' : 'open';
                             $displayOrderNumber = !empty($row['order_number']) ? $row['order_number'] : 'WO' . str_pad((string)(int)($row['id'] ?? 0), 4, '0', STR_PAD_LEFT);
                             $assignedToName = 'Not Assigned';
                             if (!empty($row['work_performed_by'])) {
@@ -919,6 +915,8 @@ WHERE IFNULL(w.priority, '') <> IFNULL(latest.new_value, '')";
                 </tbody>
             </table>
         <?php endif; ?>
+        </div>
+        </section>
     </div>
 
 <?php else: ?>

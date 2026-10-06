@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/portal_notifications.inc.php';
+require_once __DIR__ . '/notification_transports.inc.php';
 
 function table_has_column(PDO $conn, string $table, string $column): bool
 {
@@ -16,7 +18,7 @@ function ensure_notification_tables(PDO $conn): void
         id INT AUTO_INCREMENT PRIMARY KEY,
         staff_id INT NOT NULL UNIQUE,
         email_enabled TINYINT(1) NOT NULL DEFAULT 1,
-        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 0,
         sms_enabled TINYINT(1) NOT NULL DEFAULT 0,
         preferred_channel VARCHAR(20) NOT NULL DEFAULT 'email',
         phone_number VARCHAR(30) DEFAULT NULL,
@@ -52,11 +54,23 @@ function ensure_notification_tables(PDO $conn): void
         id INT AUTO_INCREMENT PRIMARY KEY,
         customer_id INT NOT NULL UNIQUE,
         email_enabled TINYINT(1) NOT NULL DEFAULT 1,
-        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        whatsapp_enabled TINYINT(1) NOT NULL DEFAULT 0,
         sms_enabled TINYINT(1) NOT NULL DEFAULT 0,
         preferred_channel VARCHAR(20) NOT NULL DEFAULT 'email',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX(customer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $conn->exec("CREATE TABLE IF NOT EXISTS customer_notification_log (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        category VARCHAR(80) NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        channel VARCHAR(20) NOT NULL,
+        status VARCHAR(30) NOT NULL,
+        note VARCHAR(255) DEFAULT NULL,
+        attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX(customer_id, attempted_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
     foreach (['phone_number', 'whatsapp_number'] as $column) {
@@ -81,7 +95,7 @@ function get_staff_notification_preferences(PDO $conn, int $staffId): array
     if (!$row) {
         return [
             'email_enabled' => 1,
-            'whatsapp_enabled' => 1,
+            'whatsapp_enabled' => 0,
             'sms_enabled' => 0,
             'preferred_channel' => 'email',
             'phone_number' => '',
@@ -91,7 +105,7 @@ function get_staff_notification_preferences(PDO $conn, int $staffId): array
 
     return [
         'email_enabled' => (int)($row['email_enabled'] ?? 1),
-        'whatsapp_enabled' => (int)($row['whatsapp_enabled'] ?? 1),
+        'whatsapp_enabled' => (int)($row['whatsapp_enabled'] ?? 0),
         'sms_enabled' => (int)($row['sms_enabled'] ?? 0),
         'preferred_channel' => strtolower((string)($row['preferred_channel'] ?? 'email')),
         'phone_number' => (string)($row['phone_number'] ?? ''),
@@ -103,8 +117,8 @@ function save_staff_notification_preferences(PDO $conn, int $staffId, array $pre
 {
     ensure_notification_tables($conn);
 
-    $emailEnabled = isset($prefs['email_enabled']) ? (int)$prefs['email_enabled'] : 1;
-    $whatsappEnabled = isset($prefs['whatsapp_enabled']) ? (int)$prefs['whatsapp_enabled'] : 1;
+    $emailEnabled = isset($prefs['email_enabled']) ? (int)$prefs['email_enabled'] : 0;
+    $whatsappEnabled = isset($prefs['whatsapp_enabled']) ? (int)$prefs['whatsapp_enabled'] : 0;
     $smsEnabled = isset($prefs['sms_enabled']) ? (int)$prefs['sms_enabled'] : 0;
     $preferredChannel = in_array(strtolower((string)($prefs['preferred_channel'] ?? 'email')), ['email', 'whatsapp', 'sms', 'all'], true)
         ? strtolower((string)$prefs['preferred_channel'])
@@ -139,28 +153,52 @@ function save_staff_notification_preferences(PDO $conn, int $staffId, array $pre
 
 function get_enabled_notification_channels(array $prefs): array
 {
-    $list = [];
+    return get_notification_delivery_plan($prefs)['channels'];
+}
+
+function get_notification_delivery_plan(array $prefs): array
+{
+    $enabledChannels = [];
     foreach (['email', 'whatsapp', 'sms'] as $channel) {
-        $flagKey = $channel . '_enabled';
-        if (!empty($prefs[$flagKey])) {
-            $list[] = $channel;
+        if (!empty($prefs[$channel . '_enabled'])) {
+            $enabledChannels[] = $channel;
         }
     }
-
-    if (empty($list)) {
-        return ['email'];
+    if (empty($enabledChannels)) {
+        return ['channels' => [], 'fallback' => [], 'send_all' => false];
     }
 
     $preferred = strtolower((string)($prefs['preferred_channel'] ?? 'email'));
-    if ($preferred !== 'all' && in_array($preferred, $list, true)) {
-        return [$preferred];
-    }
-
     if ($preferred === 'all') {
-        return $list;
+        return ['channels' => $enabledChannels, 'fallback' => [], 'send_all' => true];
+    }
+    if (in_array($preferred, $enabledChannels, true)) {
+        $fallback = in_array($preferred, ['sms', 'whatsapp'], true) && in_array('email', $enabledChannels, true)
+            ? ['email']
+            : [];
+        return ['channels' => [$preferred], 'fallback' => $fallback, 'send_all' => false];
     }
 
-    return $list;
+    return ['channels' => $enabledChannels, 'fallback' => [], 'send_all' => true];
+}
+
+function deliver_notification_plan(array $plan, callable $sender): array
+{
+    $results = [];
+    foreach ($plan['channels'] ?? [] as $channel) {
+        $result = $sender((string)$channel);
+        $results[] = $result;
+        if (empty($plan['send_all'])) {
+            $status = strtolower((string)($result['status'] ?? 'failed'));
+            if (!in_array($status, ['accepted', 'sent', 'queued'], true)) {
+                foreach ($plan['fallback'] ?? [] as $fallbackChannel) {
+                    $results[] = $sender((string)$fallbackChannel);
+                }
+            }
+            break;
+        }
+    }
+    return $results;
 }
 
 function get_staff_contact_record(PDO $conn, int $staffId): array
@@ -178,11 +216,14 @@ function get_staff_contact_record(PDO $conn, int $staffId): array
     $stmt = $conn->prepare('SELECT ' . implode(', ', $selectParts) . ' FROM staff WHERE id = ? LIMIT 1');
     $stmt->execute([$staffId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $preferenceStmt = $conn->prepare('SELECT phone_number, whatsapp_number FROM notification_preferences WHERE staff_id = ? LIMIT 1');
+    $preferenceStmt->execute([$staffId]);
+    $preferenceContact = $preferenceStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
     return [
         'email' => trim((string)($row['email'] ?? '')),
-        'phone_number' => trim((string)($row['phone_number'] ?? '')),
-        'whatsapp_number' => trim((string)($row['whatsapp_number'] ?? ($row['phone_number'] ?? ''))),
+        'phone_number' => trim((string)($preferenceContact['phone_number'] ?? '')) ?: trim((string)($row['phone_number'] ?? '')),
+        'whatsapp_number' => trim((string)($preferenceContact['whatsapp_number'] ?? '')) ?: trim((string)($row['whatsapp_number'] ?? ($row['phone_number'] ?? ''))),
     ];
 }
 
@@ -193,32 +234,29 @@ function append_notification_log(PDO $conn, int $staffId, string $category, stri
     return $stmt->execute([$staffId, $category, $subject, $message, $link, $channel, $status]);
 }
 
+function append_customer_notification_log(PDO $conn, int $customerId, string $category, string $subject, string $channel, string $status, string $note = ''): bool
+{
+    ensure_notification_tables($conn);
+    $stmt = $conn->prepare('INSERT INTO customer_notification_log (customer_id, category, subject, channel, status, note, attempted_at) VALUES (?, ?, ?, ?, ?, ?, NOW())');
+    return $stmt->execute([$customerId, $category, $subject, $channel, $status, $note !== '' ? $note : null]);
+}
+
 function send_notification_channel(PDO $conn, int $staffId, string $channel, string $category, string $subject, string $message, string $link = ''): array
 {
     $contact = get_staff_contact_record($conn, $staffId);
-    $payload = [
-        'channel' => $channel,
-        'status' => 'queued',
-        'note' => 'Queued for delivery.',
-    ];
-
     if ($channel === 'email' && $contact['email'] !== '') {
-        $headers = "From: no-reply@sps.local\r\n" . "Reply-To: no-reply@sps.local\r\n" . "X-Mailer: SPS Portal\r\n" . "Content-Type: text/plain; charset=UTF-8\r\n";
-        $mailResult = @mail($contact['email'], $subject, $message . "\r\n\r\n" . $link, $headers);
-        $payload['status'] = $mailResult ? 'sent' : 'failed';
-        $payload['note'] = $mailResult ? 'Email sent.' : 'Email delivery failed.';
+        $payload = send_email_notification($contact['email'], $subject, $message, $link);
     } elseif ($channel === 'whatsapp' && $contact['whatsapp_number'] !== '') {
-        $payload['status'] = 'queued';
-        $payload['note'] = 'WhatsApp delivery is configured for Twilio API when credentials are added.';
+        $payload = send_twilio_notification('whatsapp', $contact['whatsapp_number'], $subject, $message, $link);
     } elseif ($channel === 'sms' && $contact['phone_number'] !== '') {
-        $payload['status'] = 'queued';
-        $payload['note'] = 'SMS delivery is configured for Twilio API when credentials are added.';
+        $payload = send_twilio_notification('sms', $contact['phone_number'], $subject, $message, $link);
     } else {
-        $payload['status'] = 'skipped';
-        $payload['note'] = 'No matching contact number was available for this channel.';
+        $payload = ['channel' => $channel, 'status' => 'skipped', 'note' => $channel === 'email'
+            ? 'No staff email address is available.'
+            : 'No matching phone number is available for this channel.'];
     }
 
-    append_notification_log($conn, $staffId, $category, $subject, $message, $link, $channel, $payload['status']);
+    append_notification_log($conn, $staffId, $category, $subject, $message, $link, $channel, (string)$payload['status']);
 
     return $payload;
 }
@@ -226,16 +264,13 @@ function send_notification_channel(PDO $conn, int $staffId, string $channel, str
 function notify_staff_by_id(PDO $conn, int $staffId, string $category, string $subject, string $message, string $link = ''): array
 {
     ensure_notification_tables($conn);
+    create_portal_notification($conn, 'staff', $staffId, $category, $subject, $message, $link);
 
     $prefs = get_staff_notification_preferences($conn, $staffId);
-    $channels = get_enabled_notification_channels($prefs);
-    $results = [];
-
-    foreach ($channels as $channel) {
-        $results[] = send_notification_channel($conn, $staffId, $channel, $category, $subject, $message, $link);
-    }
-
-    return $results;
+    $plan = get_notification_delivery_plan($prefs);
+    return deliver_notification_plan($plan, static function (string $channel) use ($conn, $staffId, $category, $subject, $message, $link): array {
+        return send_notification_channel($conn, $staffId, $channel, $category, $subject, $message, $link);
+    });
 }
 
 function notify_staff_roles(PDO $conn, array $roles, string $category, string $subject, string $message, string $link = ''): array
@@ -282,7 +317,7 @@ function get_customer_notification_preferences(PDO $conn, int $customerId): arra
     if (!$row) {
         return [
             'email_enabled' => 1,
-            'whatsapp_enabled' => 1,
+            'whatsapp_enabled' => 0,
             'sms_enabled' => 0,
             'preferred_channel' => 'email',
         ];
@@ -290,7 +325,7 @@ function get_customer_notification_preferences(PDO $conn, int $customerId): arra
 
     return [
         'email_enabled' => (int)($row['email_enabled'] ?? 1),
-        'whatsapp_enabled' => (int)($row['whatsapp_enabled'] ?? 1),
+        'whatsapp_enabled' => (int)($row['whatsapp_enabled'] ?? 0),
         'sms_enabled' => (int)($row['sms_enabled'] ?? 0),
         'preferred_channel' => strtolower((string)($row['preferred_channel'] ?? 'email')),
     ];
@@ -319,10 +354,9 @@ function save_customer_notification_preferences(PDO $conn, int $customerId, arra
     return $stmt->execute([$customerId, $emailEnabled, $whatsappEnabled, $smsEnabled, $preferredChannel]);
 }
 
-function notify_customer_workorder_update(PDO $conn, int $customerId, int $workOrderId, string $status): array
+function notify_customer_event(PDO $conn, int $customerId, string $category, string $subject, string $message, string $link): array
 {
     ensure_notification_tables($conn);
-
     $prefs = get_customer_notification_preferences($conn, $customerId);
     $customerStmt = $conn->prepare('SELECT id, name, email, phone FROM customers WHERE id = ? LIMIT 1');
     $customerStmt->execute([$customerId]);
@@ -331,24 +365,79 @@ function notify_customer_workorder_update(PDO $conn, int $customerId, int $workO
         return [];
     }
 
-    $channels = get_enabled_notification_channels($prefs);
-    $results = [];
-    // Avoid putting status/work details in the email body; email is not a secure channel.
-    $subject = 'Update on your work order #' . $workOrderId;
-    $message = 'There has been an update on your work order #' . $workOrderId . '. Please log in to your account to view the latest details.';
-    $link = '/sps/pages/customer_dashboard.php';
+    $plan = get_notification_delivery_plan($prefs);
+    create_portal_notification($conn, 'customer', $customerId, $category, $subject, $message, $link);
 
-    foreach ($channels as $channel) {
+    return deliver_notification_plan($plan, static function (string $channel) use ($conn, $customerId, $customerRow, $category, $subject, $message, $link): array {
+        $result = ['channel' => $channel, 'status' => 'skipped', 'note' => 'No matching contact address was available.'];
         if ($channel === 'email' && !empty($customerRow['email'])) {
-            $headers = "From: no-reply@sps.local\r\n" . "Reply-To: no-reply@sps.local\r\n" . "X-Mailer: SPS Portal\r\n" . "Content-Type: text/plain; charset=UTF-8\r\n";
-            $mailResult = @mail($customerRow['email'], $subject, $message . "\r\n\r\n" . $link, $headers);
-            $results[] = ['channel' => 'email', 'status' => $mailResult ? 'sent' : 'failed'];
+            $result = send_email_notification((string)$customerRow['email'], $subject, $message, $link);
         } elseif ($channel === 'whatsapp' && !empty($customerRow['phone'])) {
-            $results[] = ['channel' => 'whatsapp', 'status' => 'queued', 'note' => 'WhatsApp queued for Twilio delivery when credentials are added.'];
+            $result = send_twilio_notification('whatsapp', (string)$customerRow['phone'], $subject, $message, $link);
         } elseif ($channel === 'sms' && !empty($customerRow['phone'])) {
-            $results[] = ['channel' => 'sms', 'status' => 'queued', 'note' => 'SMS queued for Twilio delivery when credentials are added.'];
+            $result = send_twilio_notification('sms', (string)$customerRow['phone'], $subject, $message, $link);
+        } else {
+            $result['note'] = $channel === 'email' ? 'No customer email address is available.' : 'No customer phone number is available.';
+        }
+        append_customer_notification_log($conn, $customerId, $category, $subject, $channel, $result['status'], $result['note']);
+        return $result;
+    });
+}
+
+function customer_workorder_change_summary(array $changes): string
+{
+    $summaries = [];
+    $seen = [];
+    $fieldLabels = [
+        'status' => 'status',
+        'priority' => 'priority',
+        'service_type' => 'service type',
+        'expected_start_date' => 'scheduled start date',
+        'expected_end_date' => 'scheduled end date',
+        'requested_work' => 'requested work details',
+        'work_description' => 'work description',
+        'equipment_details' => 'asset details',
+        'vessel_vin' => 'asset identification details',
+        'vessel_hours' => 'asset hours',
+        'permission_date' => 'property access schedule',
+        'permission_time' => 'property access schedule',
+        'permission_anytime' => 'property access schedule',
+        'permission_time_relation' => 'property access schedule',
+    ];
+
+    foreach ($changes as $change) {
+        $field = (string)($change['field'] ?? '');
+        if (!isset($fieldLabels[$field])) {
+            continue;
+        }
+        $label = $fieldLabels[$field];
+        if (isset($seen[$label])) {
+            continue;
+        }
+        $seen[$label] = true;
+        if ($field === 'status' || $field === 'priority') {
+            $newValue = trim(strip_tags((string)($change['new'] ?? '')));
+            $summaries[] = $label . ' changed to ' . ($newValue !== '' ? $newValue : 'not set');
+        } else {
+            $summaries[] = ucfirst($label) . ' updated';
         }
     }
 
-    return $results;
+    return implode('; ', $summaries);
+}
+
+function notify_customer_workorder_update(PDO $conn, int $customerId, int $workOrderId, string $status, string $updateDetails = ''): array
+{
+    $subject = 'Update on your work order #' . $workOrderId;
+    $updateDetails = trim(strip_tags($updateDetails));
+    if ($updateDetails === '') {
+        $status = trim(strip_tags($status));
+        $updateDetails = $status !== '' && strtolower($status) !== 'updated'
+            ? 'Status is currently ' . $status
+            : 'Work-order details were updated';
+    }
+    $updateDetails = mb_substr($updateDetails, 0, 240, 'UTF-8');
+    $message = 'Work order #' . $workOrderId . ': ' . rtrim($updateDetails, '. ') . '.';
+    $link = '/sps/pages/view_workorder.php?id=' . $workOrderId;
+    return notify_customer_event($conn, $customerId, 'workorder_update', $subject, $message, $link);
 }

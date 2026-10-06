@@ -6,10 +6,67 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true || strtolo
 }
 
 require_once '../includes/dbh.inc.php';
+require_once '../includes/deleted_records.inc.php';
 require_once '../includes/notifications.php';
+require_once '../includes/customer_update_state.inc.php';
+require_once '../includes/property_entry_logs.inc.php';
+ensure_customer_update_state_schema($conn);
+ensure_property_entry_log_schema($conn);
+
+$conn->exec("CREATE TABLE IF NOT EXISTS customer_hidden_workorders (
+    customer_id INT NOT NULL,
+    workorder_id INT NOT NULL,
+    hidden_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (customer_id, workorder_id),
+    INDEX (workorder_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$conn->exec("CREATE TABLE IF NOT EXISTS customer_hidden_service_requests (
+    customer_id INT NOT NULL,
+    service_request_id INT NOT NULL,
+    hidden_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (customer_id, service_request_id),
+    INDEX (service_request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
 $customerId = (int)($_SESSION['customer_id'] ?? 0);
 $customerName = $_SESSION['customer_name'] ?? 'Customer';
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+function customer_can_hide_request_from_profile(PDO $conn, int $requestId, int $customerId): bool
+{
+    $stmt = $conn->prepare('SELECT r.status, r.created_at, w.id AS linked_workorder_id FROM customer_service_requests r LEFT JOIN workorders w ON w.id = r.approved_workorder_id WHERE r.id = ? AND r.customer_id = ? LIMIT 1');
+    $stmt->execute([$requestId, $customerId]);
+    $request = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$request) {
+        return false;
+    }
+
+    if (empty($request['linked_workorder_id'])) {
+        return true;
+    }
+
+    $status = strtolower(trim((string)($request['status'] ?? '')));
+    $createdAt = strtotime((string)($request['created_at'] ?? ''));
+    return in_array($status, ['accepted', 'closed'], true)
+        && $createdAt !== false
+        && $createdAt <= strtotime('-90 days');
+}
+
+function customer_hide_workorder_from_profile(PDO $conn, int $workorderId, int $customerId): bool
+{
+    $stmt = $conn->prepare('SELECT status FROM workorders WHERE id = ? AND customer_id = ? LIMIT 1');
+    $stmt->execute([$workorderId, $customerId]);
+    $workorder = $stmt->fetch(PDO::FETCH_ASSOC);
+    $status = strtolower(trim((string)($workorder['status'] ?? '')));
+    if (!$workorder || !in_array($status, ['completed', 'closed'], true)) {
+        return false;
+    }
+
+    $conn->prepare('INSERT IGNORE INTO customer_hidden_workorders (customer_id, workorder_id) VALUES (?, ?)')->execute([$customerId, $workorderId]);
+    return true;
+}
 
 $conn->exec("CREATE TABLE IF NOT EXISTS customer_support_messages (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -75,6 +132,40 @@ if (!in_array($workorderLimit, [10, 50, 100], true)) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['bulk_hide_workorders'])) {
+        if (!hash_equals($_SESSION['csrf_token'], (string)($_POST['csrf_token'] ?? ''))) {
+            header('Location: /sps/pages/customer_dashboard.php?workorder_hide_error=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+            exit;
+        }
+        $selectedWorkorderIds = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['selected_workorders'] ?? [])))));
+        $hiddenCount = 0;
+        foreach ($selectedWorkorderIds as $selectedWorkorderId) {
+            if (customer_hide_workorder_from_profile($conn, $selectedWorkorderId, $customerId)) {
+                $hiddenCount++;
+            }
+        }
+        if ($hiddenCount > 0) {
+            header('Location: /sps/pages/customer_dashboard.php?workorders_hidden=' . $hiddenCount . '&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+        } else {
+            header('Location: /sps/pages/customer_dashboard.php?workorder_hide_error=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+        }
+        exit;
+    }
+
+    if (isset($_POST['hide_workorder'])) {
+        $hideId = (int)$_POST['hide_workorder'];
+        if (!hash_equals($_SESSION['csrf_token'], (string)($_POST['csrf_token'] ?? ''))) {
+            header('Location: /sps/pages/customer_dashboard.php?workorder_hide_error=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+            exit;
+        }
+        if (customer_hide_workorder_from_profile($conn, $hideId, $customerId)) {
+            header('Location: /sps/pages/customer_dashboard.php?workorder_hidden=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+        } else {
+            header('Location: /sps/pages/customer_dashboard.php?workorder_hide_error=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
+        }
+        exit;
+    }
+
     if (isset($_POST['request_halt'])) {
         $haltId = (int)$_POST['request_halt'];
         if ($haltId > 0) {
@@ -95,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $orderLabel = !empty($targetWo['order_number']) ? $targetWo['order_number'] : 'WO' . str_pad((string)$haltId, 4, '0', STR_PAD_LEFT);
                     notify_staff_roles(
                         $conn,
-                        ['admin', 'office'],
+                        ['admin', 'office', 'staff'],
                         'customer_halt_request',
                         'Customer requested a pause on work order: ' . $orderLabel,
                         'The customer has requested that work be paused on work order ' . $orderLabel . '. Its status has been set to On Hold.',
@@ -110,9 +201,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (isset($_POST['delete_request'])) {
         $deleteId = (int)$_POST['delete_request'];
-        if ($deleteId > 0) {
-            $deleteRequest = $conn->prepare('DELETE FROM customer_service_requests WHERE id = ? AND customer_id = ? AND approved_workorder_id IS NULL');
-            $deleteRequest->execute([$deleteId, $customerId]);
+        if (hash_equals($_SESSION['csrf_token'], (string)($_POST['csrf_token'] ?? '')) && $deleteId > 0 && customer_can_hide_request_from_profile($conn, $deleteId, $customerId)) {
+            $conn->prepare('INSERT IGNORE INTO customer_hidden_service_requests (customer_id, service_request_id) VALUES (?, ?)')->execute([$customerId, $deleteId]);
         }
         header('Location: /sps/pages/customer_dashboard.php?request_deleted=1&request_limit=' . $requestLimit . '&workorder_limit=' . $workorderLimit);
         exit;
@@ -145,17 +235,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        if (!empty($selectedIds)) {
-            try {
-                $conn->beginTransaction();
-                foreach ($selectedIds as $selectedId) {
-                    $bulkDelete = $conn->prepare('DELETE FROM customer_service_requests WHERE id = ? AND customer_id = ? AND approved_workorder_id IS NULL');
-                    $bulkDelete->execute([$selectedId, $customerId]);
-                }
-                $conn->commit();
-            } catch (Exception $e) {
-                if ($conn->inTransaction()) {
-                    $conn->rollBack();
+        if (!empty($selectedIds) && hash_equals($_SESSION['csrf_token'], (string)($_POST['csrf_token'] ?? ''))) {
+            foreach ($selectedIds as $selectedId) {
+                if (customer_can_hide_request_from_profile($conn, $selectedId, $customerId)) {
+                    $conn->prepare('INSERT IGNORE INTO customer_hidden_service_requests (customer_id, service_request_id) VALUES (?, ?)')->execute([$customerId, $selectedId]);
                 }
             }
         }
@@ -165,17 +248,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$workOrders = $conn->prepare('SELECT * FROM workorders WHERE customer_id = :customer_id ORDER BY updated_at DESC, created_at DESC LIMIT ' . (int)$workorderLimit);
+$workOrders = $conn->prepare('SELECT w.* FROM workorders w WHERE w.customer_id = :customer_id AND NOT EXISTS (SELECT 1 FROM customer_hidden_workorders h WHERE h.customer_id = :hidden_customer_id AND h.workorder_id = w.id) ORDER BY w.updated_at DESC, w.created_at DESC LIMIT ' . (int)$workorderLimit);
 $workOrders->execute([
     ':customer_id' => $customerId,
+    ':hidden_customer_id' => $customerId,
 ]);
 $workOrders = $workOrders->fetchAll(PDO::FETCH_ASSOC);
 
 $serviceRequests = $conn->prepare('SELECT r.*, w.id AS linked_workorder_id, w.status AS linked_workorder_status, w.order_number AS linked_workorder_number FROM customer_service_requests r LEFT JOIN workorders w ON w.id = r.approved_workorder_id WHERE r.customer_id = :customer_id ORDER BY r.created_at DESC LIMIT ' . (int)$requestLimit);
+$serviceRequests = $conn->prepare('SELECT r.*, w.id AS linked_workorder_id, w.status AS linked_workorder_status, w.order_number AS linked_workorder_number FROM customer_service_requests r LEFT JOIN workorders w ON w.id = r.approved_workorder_id WHERE r.customer_id = :customer_id AND NOT EXISTS (SELECT 1 FROM customer_hidden_service_requests h WHERE h.customer_id = :hidden_customer_id AND h.service_request_id = r.id) ORDER BY r.created_at DESC LIMIT ' . (int)$requestLimit);
 $serviceRequests->execute([
     ':customer_id' => $customerId,
+    ':hidden_customer_id' => $customerId,
 ]);
 $serviceRequests = $serviceRequests->fetchAll(PDO::FETCH_ASSOC);
+
+$unreadWorkOrderUpdates = [];
+foreach ($workOrders as $workOrder) {
+    $workOrderId = (int)$workOrder['id'];
+    $latestActivity = customer_workorder_latest_activity($conn, $workOrderId, (string)($workOrder['created_at'] ?? ''));
+    $lastSeen = customer_update_seen_at($conn, $customerId, 'workorder', $workOrderId);
+    $baseline = $lastSeen ?? (string)($workOrder['created_at'] ?? '');
+    if ($latestActivity !== '' && $baseline !== '' && $latestActivity > $baseline) {
+        $unreadWorkOrderUpdates[$workOrderId] = true;
+    }
+}
+
+$unreadServiceRequestUpdates = [];
+foreach ($serviceRequests as $serviceRequest) {
+    $serviceRequestId = (int)$serviceRequest['id'];
+    $latestActivity = (string)($serviceRequest['updated_at'] ?? $serviceRequest['created_at'] ?? '');
+    $lastSeen = customer_update_seen_at($conn, $customerId, 'service_request', $serviceRequestId);
+    $baseline = $lastSeen ?? (string)($serviceRequest['created_at'] ?? '');
+    if ($latestActivity !== '' && $baseline !== '' && $latestActivity > $baseline) {
+        $unreadServiceRequestUpdates[$serviceRequestId] = true;
+    }
+}
 
 $title = 'Customer Dashboard';
 require_once '../includes/header.php';
@@ -195,6 +303,59 @@ foreach ($workOrders as $wo) {
     }
 }
 ?>
+
+<style>
+    .customer-workorders-table { width:100%; table-layout:fixed; border-collapse:collapse; }
+    .customer-workorders-table th:nth-child(1),
+    .customer-workorders-table td:nth-child(1) { width:13%; }
+    .customer-workorders-table th:nth-child(2),
+    .customer-workorders-table td:nth-child(2) { width:34%; }
+    .customer-workorders-table th:nth-child(3),
+    .customer-workorders-table td:nth-child(3) { width:11%; }
+    .customer-workorders-table th:nth-child(4),
+    .customer-workorders-table td:nth-child(4) { width:12%; }
+    .customer-workorders-table th:nth-child(5),
+    .customer-workorders-table td:nth-child(5) { width:16%; }
+    #service-panel,
+    #bulk-delete-form { width:100%; min-width:0; }
+    #service-panel > form { display:block; width:100%; }
+    #service-panel .customer-requests-table { width:100% !important; table-layout:fixed; border-collapse:collapse; }
+    .customer-requests-table th,
+    .customer-requests-table td { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
+    .customer-requests-table th:first-child,
+    .customer-requests-table td:first-child { padding-left:18px !important; }
+    .customer-requests-table .request-actions { white-space:nowrap; }
+    .customer-requests-table .request-actions form { display:inline-block; margin:0; vertical-align:middle; }
+    .customer-workorders-table th,
+    .customer-workorders-table td { min-width:0; overflow-wrap:anywhere; word-break:break-word; }
+    .customer-workorders-table .workorder-actions { width:92px; white-space:nowrap !important; }
+    .customer-workorders-table .workorder-actions form { display:inline-block !important; margin:0; vertical-align:middle; }
+    .customer-workorders-table .workorder-actions a,
+    .customer-workorders-table .workorder-actions button { vertical-align:middle; }
+    .customer-workorders-table th:first-child,
+    .customer-workorders-table td:first-child { padding-left:18px !important; }
+    .customer-update-row { background:#eff6ff !important; box-shadow:inset 3px 0 #2563eb; }
+    @media (max-width:640px) {
+        .customer-workorders-table th:nth-child(1),
+        .customer-workorders-table td:nth-child(1) { width:15%; }
+        .customer-workorders-table th:nth-child(2),
+        .customer-workorders-table td:nth-child(2) { width:31%; }
+        .customer-workorders-table th:nth-child(3),
+        .customer-workorders-table td:nth-child(3) { width:10%; }
+        .customer-workorders-table th,
+        .customer-workorders-table td { padding:5px 4px !important; font-size:11px !important; }
+        .customer-workorders-table .workorder-actions { width:78px; white-space:nowrap !important; }
+        .customer-workorders-table .workorder-actions a { padding:0 5px !important; font-size:10px !important; }
+        .customer-workorders-table .workorder-actions button { width:22px !important; height:22px !important; }
+        .customer-workorders-table .workorder-actions button.profile-hide-button { width:40px !important; min-width:40px !important; height:22px !important; padding:0 3px !important; font-size:9px !important; }
+        .customer-requests-table th,
+        .customer-requests-table td { padding:5px 4px !important; font-size:10px !important; line-height:1.2 !important; }
+        .customer-requests-table th:first-child,
+        .customer-requests-table td:first-child { padding-left:8px !important; }
+        .customer-requests-table .request-actions a { height:22px !important; padding:0 5px !important; font-size:10px !important; }
+        .customer-requests-table .request-actions button { width:22px !important; height:22px !important; }
+    }
+</style>
 
 <div style="max-width: 1200px; margin: 32px auto 48px; padding: 0 18px;">
     <h2>Customer Dashboard</h2>
@@ -227,7 +388,7 @@ foreach ($workOrders as $wo) {
     </div>
 
     <div style="margin-bottom:18px; color:#475569; font-size:13px;">
-        Status updates refresh automatically every 20 seconds.
+        Dashboard updates are checked automatically every few seconds.
     </div>
 
     <?php if (isset($_GET['request_submitted']) && $_GET['request_submitted'] == '1'): ?>
@@ -237,8 +398,16 @@ foreach ($workOrders as $wo) {
     <?php endif; ?>
     <?php if (isset($_GET['request_deleted']) && $_GET['request_deleted'] == '1'): ?>
         <div style="background:#fef2f2; color:#991b1b; border:1px solid #fecaca; border-radius:8px; padding:12px 16px; margin-bottom:18px; font-weight:700;">
-            The request was removed successfully.
+            The request was removed from your profile. It remains available to our team.
         </div>
+    <?php endif; ?>
+    <?php if (isset($_GET['workorders_hidden'])): ?>
+        <div style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:8px; padding:12px 16px; margin-bottom:18px; font-weight:700;">Removed <?php echo (int)$_GET['workorders_hidden']; ?> closed work order(s) from your profile. They remain in our system.</div>
+    <?php endif; ?>
+    <?php if (isset($_GET['workorder_hidden']) && $_GET['workorder_hidden'] == '1'): ?>
+        <div style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:8px; padding:12px 16px; margin-bottom:18px; font-weight:700;">The closed work order was removed from your profile. It remains available to our team.</div>
+    <?php elseif (isset($_GET['workorder_hide_error']) && $_GET['workorder_hide_error'] == '1'): ?>
+        <div style="background:#fef2f2; color:#991b1b; border:1px solid #fecaca; border-radius:8px; padding:12px 16px; margin-bottom:18px; font-weight:700;">Only a work order belonging to your account that is Completed or Closed can be hidden from your profile.</div>
     <?php endif; ?>
     <?php if (isset($_GET['halt_requested']) && $_GET['halt_requested'] == '1'): ?>
         <div style="background:#fff7ed; color:#92400e; border:1px solid #fdba74; border-radius:8px; padding:12px 16px; margin-bottom:18px; font-weight:700;">
@@ -246,10 +415,10 @@ foreach ($workOrders as $wo) {
         </div>
     <?php endif; ?>
 
-    <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 10px rgba(0,0,0,0.04); overflow:hidden; margin-bottom:24px;">
-        <div style="background:#0f766e; color:#fff; padding:8px 12px; font-weight:700; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap; min-height:42px;">
+    <div class="customer-dashboard-card" style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 10px rgba(0,0,0,0.04); overflow:hidden; margin-bottom:24px;">
+    <div class="customer-dashboard-card-header" style="background:#0f766e; color:#fff; padding:8px 12px; font-weight:700; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap; min-height:42px;">
             <span style="font-size:14px; white-space:nowrap;">Service Requests</span>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-left:auto;">
+            <div class="customer-dashboard-card-tools" style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-left:auto;">
                 <label style="font-size:11px; font-weight:600; color:#ecfeff; display:flex; align-items:center; gap:5px; white-space:nowrap;">
                     Show
                     <select id="request-limit" onchange="window.location.href = updateQueryString(window.location.href, 'request_limit', this.value);" style="padding:2px 6px; border-radius:5px; border:1px solid rgba(255,255,255,0.35); background:#ffffff; color:#0f172a; font-weight:700; font-size:11px; min-width:66px; height:26px;">
@@ -258,30 +427,41 @@ foreach ($workOrders as $wo) {
                         <option value="100" <?php echo $requestLimit === 100 ? 'selected' : ''; ?>>100</option>
                     </select>
                 </label>
-                <button type="button" class="panel-toggle" data-panel="service-panel" data-label-hide="Hide" data-label-show="Show" style="background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.35); color:#fff; border-radius:5px; padding:4px 9px; cursor:pointer; font-weight:700; font-size:11px; line-height:1; height:26px;">Hide</button>
+                <button type="button" class="panel-toggle" data-panel="service-panel" data-label-hide="Hide" data-label-show="Show" aria-expanded="true" style="background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.35); color:#fff; border-radius:5px; padding:4px 9px; cursor:pointer; font-weight:700; font-size:11px; line-height:1; height:26px;">Hide</button>
             </div>
         </div>
-        <div id="service-panel" style="display:block;">
+        <div id="service-panel">
             <?php if (empty($serviceRequests)): ?>
                 <div style="padding:20px; color:#4b5563;">You have not submitted any service requests yet.</div>
             <?php else: ?>
-                <form id="bulk-delete-form" method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Delete the selected requests? This cannot be undone.');">
+                <form id="bulk-delete-form" method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Hide the selected service requests from your profile? Our team can still access them.');">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
                     <input type="hidden" id="selected_ids" name="selected_ids" value="">
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
                         <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#334155; margin:0;">
                             <input type="checkbox" id="select-all-requests" style="accent-color:#0f766e; width:14px; height:14px;">
                             Select all
                         </label>
-                        <button id="bulk-delete-button" type="submit" name="bulk_delete_requests" value="1" style="display:none; align-items:center; justify-content:center; width:58px; height:20px; padding:0 6px; background:linear-gradient(135deg, #f87171, #dc2626); color:#fff; border:none; border-radius:5px; cursor:pointer; font-weight:700; font-size:9px; line-height:1; letter-spacing:0.02em; box-shadow:0 2px 8px rgba(220,38,38,0.15);">Delete</button>
+                        <button id="bulk-delete-button" type="submit" name="bulk_delete_requests" value="1" title="Hide selected requests from your profile" aria-label="Hide selected requests from your profile" style="display:none; align-items:center; justify-content:center; width:46px; min-width:46px; height:24px; padding:0 5px; background:#475569; color:#fff; border:none; border-radius:5px; cursor:pointer; font-weight:700; font-size:10px;">Hide</button>
                     </div>
-                    <table style="width:100%; border-collapse:collapse;">
+                </form>
+                    <table class="customer-requests-table">
+                        <colgroup>
+                            <col style="width:7%;">
+                            <col style="width:9%;">
+                            <col style="width:9%;">
+                            <col style="width:31%;">
+                            <col style="width:12%;">
+                            <col style="width:16%;">
+                            <col style="width:16%;">
+                        </colgroup>
                         <thead>
                             <tr style="background:#f8fafc;">
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2; width:34px;">Sel</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Request #</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Type</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Location</th>
-                                <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Preferred Dates</th>
+                                <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Dates</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Status</th>
                                 <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Action</th>
                             </tr>
@@ -294,39 +474,37 @@ foreach ($workOrders as $wo) {
                                         $requestNumber = 'SR-' . str_pad((string)(int)$request['id'], 5, '0', STR_PAD_LEFT);
                                     }
                                     $requestRowBg = ($request['id'] % 2 === 0) ? '#f8fafc' : '#ffffff';
+                                    $requestHasUnreadUpdate = !empty($unreadServiceRequestUpdates[(int)$request['id']]);
+                                    $requestStatus = strtolower(trim((string)($request['status'] ?? '')));
+                                    $requestCreatedAt = strtotime((string)($request['created_at'] ?? ''));
+                                    $requestIsOld = $requestCreatedAt !== false && $requestCreatedAt <= strtotime('-90 days');
+                                    $canHideRequest = empty($request['linked_workorder_id'])
+                                        || (in_array($requestStatus, ['accepted', 'closed'], true) && $requestIsOld);
                                 ?>
-                                <tr style="border-bottom:1px solid #e5e7eb; background:<?php echo $requestRowBg; ?>;">
+                                <tr class="<?php echo $requestHasUnreadUpdate ? 'customer-update-row' : ''; ?>" style="border-bottom:1px solid #e5e7eb; background:<?php echo $requestHasUnreadUpdate ? '#eff6ff' : $requestRowBg; ?>;">
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
-                                        <?php if (empty($request['linked_workorder_id']) && strtolower((string)($request['status'] ?? 'Pending')) !== 'accepted'): ?>
-                                            <input type="checkbox" name="selected_requests[]" value="<?php echo (int)$request['id']; ?>" class="request-select-checkbox" style="accent-color:#0f766e; width:14px; height:14px;">
+                                        <?php if ($canHideRequest): ?>
+                                            <input type="checkbox" form="bulk-delete-form" name="selected_requests[]" value="<?php echo (int)$request['id']; ?>" class="request-select-checkbox" style="accent-color:#0f766e; width:14px; height:14px;">
                                         <?php else: ?>
                                             <span style="color:#94a3b8; font-size:11px;">—</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td style="padding:4px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2;"><a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"><?php echo htmlspecialchars($requestNumber, ENT_QUOTES, 'UTF-8'); ?></a></td>
+                                    <td style="padding:4px 8px; font-weight:700; color:#0f172a; font-size:12px; line-height:1.2;">
+                                        <a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="color:#007BFF; text-decoration:none; font-weight:700;"><?php echo htmlspecialchars($requestNumber, ENT_QUOTES, 'UTF-8'); ?></a>
+                                    </td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['service_type'] ?? 'Service', ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2; "><?php echo htmlspecialchars($request['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td style="padding:4px 8px; font-size:12px; line-height:1.5;">
-    <div>
-        <strong>Start:</strong>
-        <?php
-        $preferredStart = trim((string)($request['preferred_date'] ?? ''));
-        echo $preferredStart !== ''
-            ? htmlspecialchars(date('M j, Y', strtotime($preferredStart)), ENT_QUOTES, 'UTF-8')
-            : 'Not set';
-        ?>
-    </div>
-
-    <div>
-        <strong>End:</strong>
-        <?php
-        $preferredEnd = trim((string)($request['preferred_end_date'] ?? ''));
-        echo $preferredEnd !== ''
-            ? htmlspecialchars(date('M j, Y', strtotime($preferredEnd)), ENT_QUOTES, 'UTF-8')
-            : 'Not set';
-        ?>
-    </div>
-</td>
+                                    <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
+                                        <?php
+                                            $preferredStart = trim((string)($request['preferred_date'] ?? ''));
+                                            $preferredEnd = trim((string)($request['preferred_end_date'] ?? ''));
+                                            echo htmlspecialchars(
+                                                ($preferredStart !== '' ? date('M j', strtotime($preferredStart)) : '—') . ' – ' . ($preferredEnd !== '' ? date('M j', strtotime($preferredEnd)) : '—'),
+                                                ENT_QUOTES,
+                                                'UTF-8'
+                                            );
+                                        ?>
+                                    </td>
                                     <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
                                         <?php
                                         $requestStatus = strtolower(trim((string)($request['status'] ?? 'Pending')));
@@ -335,21 +513,20 @@ foreach ($workOrders as $wo) {
                                         elseif ($requestStatus === 'rejected') { $requestColor = '#991b1b'; }
                                         elseif ($requestStatus === 'pending') { $requestColor = '#7c3aed'; }
                                         ?>
-                                        <span style="display:inline-block; padding:4px 8px; border-radius:999px; background:rgba(59,130,246,0.12); color:<?php echo $requestColor; ?>; font-weight:700;">
+                                        <span style="display:inline-block; padding:3px 7px; border-radius:999px; background:rgba(59,130,246,0.12); color:<?php echo $requestColor; ?>; font-weight:700;">
                                             <?php echo htmlspecialchars($request['status'] ?? 'Pending', ENT_QUOTES, 'UTF-8'); ?>
                                         </span>
                                         <?php if (!empty($request['linked_workorder_id'])): ?>
-                                            <div style="margin-top:6px;">
-                                                <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['linked_workorder_id']; ?>" style="font-size:12px; color:#007BFF; text-decoration:none; font-weight:700;">View work order #<?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['linked_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
-                                            </div>
+                                            <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$request['linked_workorder_id']; ?>" style="margin-left:4px;font-size:10px;color:#007BFF;text-decoration:none;font-weight:700;">WO #<?php echo htmlspecialchars(!empty($request['linked_workorder_number']) ? $request['linked_workorder_number'] : 'WO' . str_pad((string)(int)$request['linked_workorder_id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></a>
                                         <?php endif; ?>
                                     </td>
-                                    <td style="padding:4px 8px; font-size:12px; line-height:1; vertical-align:middle;">
+                                    <td class="request-actions" style="padding:4px 8px; font-size:12px; line-height:1; vertical-align:middle;">
                                         <a href="/sps/pages/view_service_request.php?id=<?php echo (int)$request['id']; ?>" style="display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 8px; background:#e0f2fe; color:#0f172a; text-decoration:none; border-radius:7px; font-weight:700; font-size:11px; border:1px solid #bae6fd; vertical-align:middle; margin-right:6px;">View</a>
-                                        <?php if (empty($request['linked_workorder_id']) && strtolower((string)($request['status'] ?? 'Pending')) !== 'accepted'): ?>
-                                            <form method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Delete this request? This cannot be undone.');" style="display:inline-block; margin:0; line-height:1; vertical-align:middle;">
+                                        <?php if ($canHideRequest): ?>
+                                            <form method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Hide this service request from your profile? Our team can still access it.');" style="display:inline-block; margin:0; line-height:1; vertical-align:middle;">
+                                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
                                                 <input type="hidden" name="delete_request" value="<?php echo (int)$request['id']; ?>">
-                                                <button type="submit" title="Delete request" aria-label="Delete request" style="display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; background:linear-gradient(135deg, #f87171, #dc2626); color:#fff; border:1px solid rgba(255,255,255,0.6); border-radius:7px; padding:0; cursor:pointer; font-size:12px; line-height:1; box-shadow:0 3px 10px rgba(239,68,68,0.18); font-weight:700; margin:0; vertical-align:middle;">🗑</button>
+                                                <button type="submit" title="Hide from your profile" aria-label="Hide service request from your profile" style="display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; background:#f1f5f9; color:#334155; border:1px solid #cbd5e1; border-radius:7px; padding:0; cursor:pointer; font-size:10px; line-height:1; font-weight:700; margin:0; vertical-align:middle;">Hide</button>
                                             </form>
                                         <?php else: ?>
                                             <span style="color:#6b7280; font-size:12px; display:inline-block; line-height:1; vertical-align:middle;">Locked</span>
@@ -359,18 +536,17 @@ foreach ($workOrders as $wo) {
                             <?php endforeach; ?>
                         </tbody>
                     </table>
-                </form>
             <?php endif; ?>
         </div>
     </div>
 
-    <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 10px rgba(0,0,0,0.04); overflow:hidden;">
-        <div style="background:#007BFF; color:#fff; padding:8px 12px; font-weight:700; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap; min-height:42px;">
-            <div style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+    <div class="customer-dashboard-card" style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 10px rgba(0,0,0,0.04); overflow:hidden;">
+        <div class="customer-dashboard-card-header" style="background:#007BFF; color:#fff; padding:8px 12px; font-weight:700; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap; min-height:42px;">
+            <div class="customer-dashboard-card-title" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
                 <span style="font-size:14px;">My Work Orders</span>
-                <button type="button" id="status-guide-toggle" aria-label="Open status guide" title="Click to view status meanings" onclick="var panel=document.getElementById('status-guide-panel'); if(panel){ panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; }" style="display:inline-flex; align-items:center; justify-content:center; gap:6px; height:26px; padding:0 10px; border:1px solid rgba(255,255,255,0.75); border-radius:999px; background:#eff6ff; color:#1d4ed8; cursor:pointer; font-size:11px; line-height:1; font-weight:700; box-shadow:0 2px 6px rgba(30,64,175,0.15);">ⓘ Status Guide</button>
+                <button type="button" id="status-guide-toggle" aria-label="Open status guide" title="Click or hover to view status meanings" aria-expanded="false" style="display:inline-flex; align-items:center; justify-content:center; gap:6px; height:26px; padding:0 10px; border:1px solid rgba(255,255,255,0.75); border-radius:999px; background:#eff6ff; color:#1d4ed8; cursor:pointer; font-size:11px; line-height:1; font-weight:700; box-shadow:0 2px 6px rgba(30,64,175,0.15);">ⓘ Status Guide</button>
             </div>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-left:auto;">
+            <div class="customer-dashboard-card-tools" style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-left:auto;">
                 <label style="font-size:11px; font-weight:600; color:#eff6ff; display:flex; align-items:center; gap:5px; white-space:nowrap;">
                     Show
                     <select id="workorder-limit" onchange="window.location.href = updateQueryString(window.location.href, 'workorder_limit', this.value);" style="padding:2px 6px; border-radius:5px; border:1px solid rgba(255,255,255,0.35); background:#ffffff; color:#0f172a; font-weight:700; font-size:11px; min-width:66px; height:26px;">
@@ -379,10 +555,10 @@ foreach ($workOrders as $wo) {
                         <option value="100" <?php echo $workorderLimit === 100 ? 'selected' : ''; ?>>100</option>
                     </select>
                 </label>
-                <button type="button" class="panel-toggle" data-panel="workorder-panel" data-label-hide="Hide" data-label-show="Show" style="background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.35); color:#fff; border-radius:5px; padding:4px 9px; cursor:pointer; font-weight:700; font-size:11px; line-height:1; height:26px;">Hide</button>
+                <button type="button" class="panel-toggle" data-panel="workorder-panel" data-label-hide="Hide" data-label-show="Show" aria-expanded="true" style="background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.35); color:#fff; border-radius:5px; padding:4px 9px; cursor:pointer; font-weight:700; font-size:11px; line-height:1; height:26px;">Hide</button>
             </div>
         </div>
-        <div id="workorder-panel" style="display:block;">
+        <div id="workorder-panel">
             <div id="status-guide-panel" style="display:none; padding:12px 16px; border-bottom:1px solid #e5e7eb; background:#f8fafc;">
                 <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">Status guide</div>
                 <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
@@ -397,8 +573,16 @@ foreach ($workOrders as $wo) {
             <?php if (empty($workOrders)): ?>
                 <div style="padding:20px; color:#4b5563;">You do not have any work orders assigned yet.</div>
             <?php else: ?>
-                <div style="overflow-x:auto;">
-                <table style="width:100%; border-collapse:collapse;">
+                <form id="bulk-hide-workorders-form" method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Hide the selected completed work orders from your profile? They remain in our system.');" style="display:flex; align-items:center; justify-content:flex-start; gap:12px; padding:8px 10px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
+                    <label style="display:inline-flex; align-items:center; gap:6px; margin:0; font-size:12px; font-weight:700; color:#334155;">
+                                            <button id="bulk-hide-workorders-button" type="submit" name="bulk_hide_workorders" value="1" title="Hide selected work orders from your profile" aria-label="Hide selected closed work orders from your profile" style="display:none; width:64px; max-width:80px; min-width:64px; box-sizing:border-box; height:24px; padding:0 6px; border:0; border-radius:5px; background:#475569; color:#fff; font-size:10px; font-weight:700; cursor:pointer;">Hide</button>
+                        <input type="checkbox" id="select-all-workorders" style="accent-color:#475569; width:14px; height:14px;">
+                        Select all closed work orders
+                    </label>
+                </form>
+                <div style="width:100%; overflow-x:hidden;">
+                <table class="customer-workorders-table">
                     <thead>
                         <tr style="background:#f8fafc;">
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Work Order</th>
@@ -406,7 +590,7 @@ foreach ($workOrders as $wo) {
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Status</th>
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Date</th>
                             <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Location</th>
-                            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2; min-width:150px;">Action</th>
+                            <th style="padding:6px 8px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:12px; line-height:1.2;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -417,9 +601,19 @@ foreach ($workOrders as $wo) {
                                     $woIssue = 'No issue details provided';
                                 }
                             ?>
-                            <?php $workOrderRowBg = ((int)$wo['id'] % 2 === 0) ? '#f8fafc' : '#ffffff'; ?>
-                            <tr style="border-bottom:1px solid #e5e7eb; background:<?php echo $workOrderRowBg; ?>;">
-                                <td style="padding:4px 8px; font-size:12px; line-height:1.2;">#<?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?></td>
+                            <?php
+                                $workOrderRowBg = ((int)$wo['id'] % 2 === 0) ? '#f8fafc' : '#ffffff';
+                                $workOrderHasUnreadUpdate = !empty($unreadWorkOrderUpdates[(int)$wo['id']]);
+                                $woStatus = strtolower(trim((string)($wo['status'] ?? 'Open')));
+                            ?>
+                            <tr class="<?php echo $workOrderHasUnreadUpdate ? 'customer-update-row' : ''; ?>" style="border-bottom:1px solid #e5e7eb; background:<?php echo $workOrderHasUnreadUpdate ? '#eff6ff' : $workOrderRowBg; ?>;">
+                                <td style="padding:4px 8px; font-size:12px; line-height:1.2;">
+                                    <?php if (in_array($woStatus, ['completed', 'closed'], true)): ?>
+                                        <input type="checkbox" form="bulk-hide-workorders-form" name="selected_workorders[]" value="<?php echo (int)$wo['id']; ?>" class="workorder-hide-checkbox" aria-label="Select closed work order <?php echo (int)$wo['id']; ?>" style="accent-color:#475569; width:13px; height:13px; margin-right:3px;">
+                                    <?php endif; ?>
+                                    #<?php echo htmlspecialchars(!empty($wo['order_number']) ? $wo['order_number'] : 'WO' . str_pad((string)(int)$wo['id'], 4, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php if (!empty($unreadWorkOrderUpdates[(int)$wo['id']])): ?><span style="margin-left:4px;color:#1d4ed8;font-size:10px;font-weight:800;letter-spacing:.03em;">NEW</span><?php endif; ?>
+                                </td>
                                 <td style="padding:4px 8px; max-width:220px; color:#374151; font-size:12px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?php echo htmlspecialchars($woIssue, ENT_QUOTES, 'UTF-8'); ?>">
                                     <?php echo htmlspecialchars($woIssue, ENT_QUOTES, 'UTF-8'); ?>
                                 </td>
@@ -438,12 +632,19 @@ foreach ($workOrders as $wo) {
                                 </td>
                                 <td style="padding:4px 8px; font-size:12px; line-height:1.2;"><?php echo htmlspecialchars($wo['order_date'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
                                 <td style="padding:4px 8px; font-size:12px; line-height:1.2;"><?php echo htmlspecialchars($wo['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td style="padding:4px 8px; font-size:12px; line-height:1.2; white-space:nowrap;">
+                                <td class="workorder-actions" style="padding:4px 8px; font-size:12px; line-height:1.2;">
                                     <a href="/sps/pages/view_workorder.php?id=<?php echo (int)$wo['id']; ?>" style="display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 8px; background:#e0f2fe; color:#0f172a; text-decoration:none; border-radius:7px; font-weight:700; font-size:11px; border:1px solid #bae6fd; margin-right:4px;">View</a>
                                     <?php if (!in_array($woStatus, ['on hold', 'completed', 'closed'], true)): ?>
                                         <form method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Request to pause this job? Our team will be notified.');" style="display:inline-block; margin:0;">
                                             <input type="hidden" name="request_halt" value="<?php echo (int)$wo['id']; ?>">
                                             <button type="submit" title="Request to pause this job" aria-label="Request to pause this job" style="display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; background:#fff7ed; color:#92400e; border:1px solid #fdba74; border-radius:7px; font-size:12px; cursor:pointer;">⏸</button>
+                                        </form>
+                                    <?php endif; ?>
+                                    <?php if (in_array($woStatus, ['completed', 'closed'], true)): ?>
+                                        <form method="post" action="/sps/pages/customer_dashboard.php?request_limit=<?php echo (int)$requestLimit; ?>&workorder_limit=<?php echo (int)$workorderLimit; ?>" onsubmit="return confirm('Hide this closed work order from your profile? It will remain in our system.');" style="display:inline-block; margin:0;">
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
+                                            <input type="hidden" name="hide_workorder" value="<?php echo (int)$wo['id']; ?>">
+                                            <button type="submit" class="profile-hide-button" title="Hide work order from your profile" aria-label="Hide closed work order from your profile" style="display:inline-flex; align-items:center; justify-content:center; width:40px; min-width:40px; max-width:80px; height:22px; box-sizing:border-box; padding:0 3px; background:#f1f5f9; color:#334155; border:1px solid #cbd5e1; border-radius:7px; font-size:9px; font-weight:700; cursor:pointer; white-space:nowrap;">Hide</button>
                                         </form>
                                     <?php endif; ?>
                                 </td>
@@ -468,10 +669,36 @@ var statusGuideToggle = document.getElementById('status-guide-toggle');
         var statusGuidePanel = document.getElementById('status-guide-panel');
 
         if (statusGuideToggle && statusGuidePanel) {
+            var statusGuideHideTimer = null;
+            var statusGuidePinned = false;
+            function showStatusGuide() {
+                if (statusGuideHideTimer) window.clearTimeout(statusGuideHideTimer);
+                statusGuidePanel.style.display = 'block';
+                statusGuideToggle.setAttribute('aria-expanded', 'true');
+            }
+            function scheduleStatusGuideHide() {
+                if (statusGuideHideTimer) window.clearTimeout(statusGuideHideTimer);
+                statusGuideHideTimer = window.setTimeout(function () {
+                    if (!statusGuideToggle.matches(':hover') && !statusGuidePanel.matches(':hover') && !statusGuideToggle.matches(':focus')) {
+                        statusGuidePanel.style.display = 'none';
+                        statusGuideToggle.setAttribute('aria-expanded', 'false');
+                    }
+                }, 250);
+            }
             statusGuideToggle.addEventListener('click', function () {
-                var isHidden = statusGuidePanel.style.display === 'none';
-                statusGuidePanel.style.display = isHidden ? 'block' : 'none';
+                statusGuidePinned = !statusGuidePinned;
+                if (statusGuidePinned) {
+                    showStatusGuide();
+                } else {
+                    scheduleStatusGuideHide();
+                }
             });
+            statusGuideToggle.addEventListener('mouseenter', showStatusGuide);
+            statusGuideToggle.addEventListener('mouseleave', scheduleStatusGuideHide);
+            statusGuidePanel.addEventListener('mouseenter', function () {
+                if (statusGuideHideTimer) window.clearTimeout(statusGuideHideTimer);
+            });
+            statusGuidePanel.addEventListener('mouseleave', scheduleStatusGuideHide);
         }
 
         var selectAll = document.getElementById('select-all-requests');
@@ -534,6 +761,29 @@ var statusGuideToggle = document.getElementById('status-guide-toggle');
 
         updateBulkDeleteButton();
 
+        var selectAllWorkorders = document.getElementById('select-all-workorders');
+        var bulkHideWorkordersButton = document.getElementById('bulk-hide-workorders-button');
+        var workorderHideCheckboxes = Array.from(document.querySelectorAll('.workorder-hide-checkbox'));
+        function updateBulkHideWorkordersButton() {
+            var selectedCount = workorderHideCheckboxes.filter(function (checkbox) { return checkbox.checked; }).length;
+            if (bulkHideWorkordersButton) {
+                bulkHideWorkordersButton.style.display = selectedCount ? 'inline-flex' : 'none';
+            }
+            if (selectAllWorkorders) {
+                selectAllWorkorders.checked = workorderHideCheckboxes.length > 0 && selectedCount === workorderHideCheckboxes.length;
+            }
+        }
+        if (selectAllWorkorders) {
+            selectAllWorkorders.addEventListener('change', function () {
+                workorderHideCheckboxes.forEach(function (checkbox) { checkbox.checked = selectAllWorkorders.checked; });
+                updateBulkHideWorkordersButton();
+            });
+        }
+        workorderHideCheckboxes.forEach(function (checkbox) {
+            checkbox.addEventListener('change', updateBulkHideWorkordersButton);
+        });
+        updateBulkHideWorkordersButton();
+
         document.querySelectorAll('.panel-toggle').forEach(function (button) {
             button.addEventListener('click', function () {
                 var panelId = this.getAttribute('data-panel');
@@ -542,16 +792,13 @@ var statusGuideToggle = document.getElementById('status-guide-toggle');
                     return;
                 }
 
-                var isHidden = panel.style.display === 'none';
-                panel.style.display = isHidden ? 'block' : 'none';
-                this.textContent = isHidden ? 'Hide' : 'Show';
+                panel.hidden = !panel.hidden;
+                var isVisible = !panel.hidden;
+                this.textContent = isVisible ? (this.dataset.labelHide || 'Hide') : (this.dataset.labelShow || 'Show');
+                this.setAttribute('aria-expanded', String(isVisible));
             });
         });
-    });
 
-    setTimeout(function () {
-        window.location.reload();
-    }, 20000);
 </script>
 
 <?php require_once '../includes/footer.php'; ?>
